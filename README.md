@@ -1,0 +1,300 @@
+# trustwestme
+
+A self-hosted crypto payment gateway that replaces WestWallet. It speaks a
+WestWallet-shaped API, derives every user's deposit addresses from one Trust
+Wallet seed phrase, watches 15 chains for incoming money, and calls your
+exchange back when a deposit lands.
+
+21 currencies: BTC, ETH, SOL, USDT (TRC-20 / ERC-20 / BEP-20), USDC (TRC-20),
+TRX, XRP, BNB, EOS, XTZ, XMR, ZEC, BCH, BUSD (BEP-20), SHIB (BEP-20), DOGE,
+LTC, XLM, DASH.
+
+---
+
+## Read this first: what "using Trust Wallet" actually means here
+
+You asked for one main Trust Wallet account with a sub-account per user, all
+from the same seed phrase. That is exactly what this does — but it is worth
+being precise about the mechanism, because two parts of the original plan work
+differently than expected.
+
+**1. The wallet: yes, this is genuinely Trust Wallet.**
+
+Trust Wallet the *app* has no server API — you cannot call it to make accounts.
+What it has is **Trust Wallet Core**, the open-source library the app itself is
+built on. That library is in here (`@trustwallet/wallet-core`), and it does the
+precise thing you described: from one BIP39 seed phrase it derives a separate
+address for every user, on every chain, using standard BIP44 paths.
+
+Your user #1 gets index 1, user #2 gets index 2, and so on. One number
+identifies a user's whole set of addresses across all 15 chains.
+
+The payoff is real: **type your seed phrase into the Trust Wallet app and you
+are looking at every user's deposit address and every coin in them.** Nothing is
+custodial to a third party, and there is no account with anyone to lose.
+
+**2. Detecting deposits cannot come from Trust Wallet.**
+
+This is the one place the original plan cannot work as stated. You asked to skip
+node providers and "get everything from Trust Wallet" — but Trust Wallet does
+not offer deposit notifications. Nothing about holding keys tells you money
+arrived; that information only exists on the blockchains themselves. Any gateway
+— WestWallet included — has to read the chains.
+
+So the watcher reads them, and I kept it as close to your intent as possible:
+**no accounts, no API keys, no signups.** Every chain has a working public
+endpoint already configured in `.env.example`. You can run this today without
+registering anywhere. Each one is a single config line you can point at your own
+node later, and only Tron benefits from a (free) key under real load.
+
+That is the honest version of "just Trust Wallet": Trust Wallet Core owns all
+the keys and addresses; public read-only endpoints answer the question "did money
+arrive?".
+
+---
+
+## How a deposit works
+
+```
+  your exchange                trustwestme                    blockchains
+       │                            │                              │
+       │  POST /address/generate    │                              │
+       │  {currency, label:"u-42"}  │                              │
+       ├───────────────────────────►│                              │
+       │                            │ derive from seed @ index 42  │
+       │  {address, dest_tag}       │                              │
+       │◄───────────────────────────┤                              │
+       │                            │                              │
+       │                            │  poll every 30s              │
+       │                            ├─────────────────────────────►│
+       │                            │  "0.01 BTC to that address"  │
+       │                            │◄─────────────────────────────┤
+       │   IPN: status=pending      │                              │
+       │◄───────────────────────────┤  (recorded, not spendable)   │
+       │                            │                              │
+       │                            │  ...2 confirmations later    │
+       │   IPN: status=completed    │                              │
+       │◄───────────────────────────┤  balance credited            │
+```
+
+Credit the user when you receive **`completed`**. `pending` is for showing them
+"we see your deposit, it's confirming".
+
+---
+
+## Setup
+
+```bash
+npm install
+
+# 1. Generate the master seed. Write it down offline. This IS the exchange.
+npm run seed
+
+# 2. Generate your API keypair.
+npm run keys
+
+# 3. Configure.
+cp .env.example .env    # paste the seed, the keys, and your IPN url
+
+# 4. Check the seed produces sane addresses before trusting it.
+npm run addresses -- 1
+
+# 5. Run.
+npm run build && npm start
+```
+
+### Before real money: the tag/memo chains
+
+XRP, XLM and EOS need one gateway account that must exist before deposits can
+arrive:
+
+```bash
+npm run addresses -- --shared
+```
+
+- **XRP** — fund the address with the base reserve (~1 XRP) to activate it.
+- **XLM** — fund with the base reserve (~1 XLM) to activate it.
+- **EOS** — accounts are *named*; register a 12-character name and set
+  `EOS_ACCOUNT` to it. The derived key is the one to assign as its owner.
+
+Then paste the live values into `XRP_ADDRESS`, `STELLAR_ADDRESS`, `EOS_ACCOUNT`.
+
+### Why those three share one address
+
+On those chains an account has to be created and funded before it can receive
+anything. Giving every user their own would mean pre-funding a reserve for every
+signup — money you would never get back from users who never deposit. So they
+get one shared address and a **per-user destination tag / memo**, which is what
+every exchange does. The API returns `dest_tag` alongside `address`; your deposit
+page must show both, and a deposit arriving without a tag cannot be attributed
+(the watcher logs these loudly so you can credit them by hand).
+
+---
+
+## API
+
+Base URL is your own server. All endpoints except `/health` need credentials.
+
+### Authentication
+
+Two keys, as you asked — one public, one private:
+
+| Header | Value |
+|---|---|
+| `X-API-KEY` | your public key |
+| `X-Nonce` | current unix seconds |
+| `X-Signature` | `hex(HMAC-SHA256(private_key, nonce + public_key))` |
+
+The private key never leaves your server. Nonces are single-use and must be
+within 5 minutes, so a captured request cannot be replayed.
+
+```js
+const crypto = require('crypto');
+const nonce = String(Math.floor(Date.now() / 1000));
+const headers = {
+  'X-API-KEY': PUBLIC_KEY,
+  'X-Nonce': nonce,
+  'X-Signature': crypto.createHmac('sha256', PRIVATE_KEY)
+                       .update(nonce + PUBLIC_KEY).digest('hex'),
+};
+```
+
+If your existing WestWallet integration signs differently, `buildSignature()` in
+`src/api/auth.ts` is the single function to adjust. Or set `AUTH_MODE=simple` to
+use plain `X-API-KEY` + `X-API-SECRET` headers instead.
+
+### `POST /address/generate`
+
+```json
+{ "currency": "USDTTRC", "label": "user-4471", "ipn_url": "https://you/hook" }
+```
+
+`label` is your user's id — it is what ties deposits back to an account. Calling
+it twice for the same user and currency returns the same address.
+
+```json
+{
+  "address": "TSeJkUh4Qv67VNFwY8LaAxERygNdy6NQZK",
+  "dest_tag": null,
+  "tag_name": null,
+  "currency": "USDTTRC",
+  "blockchain": "tron",
+  "label": "user-4471",
+  "shared_with": ["TRX", "USDCTRC20"],
+  "required_confirmations": 20,
+  "min_deposit": "1"
+}
+```
+
+`shared_with` tells you which other currencies land on that same address.
+
+### Other endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/wallet/balance?currency=BTC&label=user-1` | one user's balance (omit `label` for the gateway total) |
+| `GET` | `/wallet/balances` | every currency at once |
+| `GET` | `/wallet/transactions?currency=&label=&status=` | deposit / withdrawal history |
+| `GET` | `/wallet/transaction?id=<uuid>` | a single transaction |
+| `POST` | `/wallet/send` | queue a withdrawal (see below) |
+| `GET` | `/wallet/currency_info?currency=BTC` | decimals, contract, confirmations |
+| `GET` | `/currencies` | all 21 currencies |
+| `GET` | `/status` | watcher health per chain |
+| `GET` | `/health` | liveness, no auth |
+
+### Currency names
+
+Canonical tickers are `BTC`, `USDTTRC`, `USDTERC20`, `USDTBEP20`, `USDCTRC20`,
+`BUSDBEP20`, `SHIBBEP20`, and so on — but aliases are accepted, so
+`USDT-TRC20`, `usdt.trc20`, `bitcoin` and `ripple` all resolve correctly. Your
+existing integration can keep sending whatever spelling it already uses. See
+`GET /currencies` for every accepted alias.
+
+---
+
+## Deposit callbacks (IPN)
+
+Each deposit fires twice — once on first sight, once on confirmation:
+
+```json
+{
+  "id": "8f14e45f-ceea-467a-9f6b-2c1d3e4a5b60",
+  "type": "deposit",
+  "currency": "BTC",
+  "address": "bc1q...",
+  "dest_tag": null,
+  "amount": "0.01",
+  "status": "completed",
+  "blockchain_hash": "9a2f...",
+  "blockchain_confirmations": 2,
+  "required_confirmations": 2,
+  "label": "user-4471",
+  "explorer_url": "https://blockchair.com/bitcoin/transaction/9a2f..."
+}
+```
+
+Verify the signature before trusting it:
+
+```js
+const expected = crypto.createHmac('sha256', IPN_SECRET)
+                       .update(rawRequestBody).digest('hex');
+// compare against the X-Gateway-Signature header
+```
+
+Delivery is **at-least-once** with exponential backoff, so make your handler
+idempotent on `id`. Failed callbacks retry for about a day before giving up.
+
+---
+
+## What is deliberately not built
+
+**Withdrawals do not sign or broadcast.** `POST /wallet/send` validates the
+request, debits the user and records it — then stops, leaving the withdrawal in
+`created` for an operator to process. Transaction signing across 15 chains is a
+project of its own, and an automated hot wallet that can move funds is the single
+most dangerous component an exchange runs. See `docs/WITHDRAWALS.md` for the
+design and how to finish it.
+
+Everything on the deposit path — derivation, watching, confirming, crediting,
+callbacks — is complete.
+
+---
+
+## Before you go live
+
+- [ ] **Verify every token contract address** in `src/currencies.ts` against a
+      block explorer. A wrong address credits worthless tokens as real ones.
+- [ ] Send a small real deposit on each chain you enable and watch it credit.
+- [ ] Confirm the seed restores: `npm run addresses -- 1`, wipe, restore, compare.
+- [ ] Put the API behind TLS. The signature protects the body, not the contents.
+- [ ] Run the public box with `WATCH_ONLY=true`.
+- [ ] Back up `data/gateway.db` — it holds the user-to-index mapping.
+- [ ] Read `docs/OPERATIONS.md`.
+
+---
+
+## Testing
+
+```bash
+npm test
+```
+
+41 tests cover derivation against published BIP39 vectors, address formats for
+every chain, tag attribution, dust rejection, request signing and replay
+rejection, and — most importantly — that a deposit seen on twenty consecutive
+scans is credited exactly once.
+
+---
+
+## Layout
+
+```
+src/
+  chains.ts          how each chain derives addresses and gets watched
+  currencies.ts      the 21 assets, their decimals and contracts
+  wallet/            Trust Wallet Core derivation, Monero RPC
+  db/                SQLite schema and queries
+  api/               HTTP server, auth, WestWallet-shaped routes
+  watcher/providers/ one deposit scanner per chain family
+  ipn.ts             signed callbacks with retries
+```

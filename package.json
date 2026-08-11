@@ -1,0 +1,32 @@
+{
+  "name": "trustwestme",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted crypto payment gateway. WestWallet-compatible API, Trust Wallet Core HD derivation.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "keys": "tsx src/cli/keys.ts",
+    "seed": "tsx src/cli/seed.ts",
+    "addresses": "tsx src/cli/addresses.ts",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@trustwallet/wallet-core": "^4.7.3",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
