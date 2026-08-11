@@ -340,7 +340,8 @@ callbacks — is complete.
 - [ ] Put the API behind TLS. The signature protects the body, not the contents.
 - [ ] Run the public box with `WATCH_ONLY=true`.
 - [ ] Back up `data/gateway.db` — it holds the user-to-index mapping.
-- [ ] Read `docs/OPERATIONS.md`.
+- [ ] Read `docs/DEPLOYMENT.md` (Linux VPS, systemd, firewall) and
+      `docs/OPERATIONS.md`.
 
 ---
 
