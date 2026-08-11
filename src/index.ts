@@ -3,6 +3,7 @@ import { getDb, closeDb } from './db/index';
 import { startServer } from './api/server';
 import { startWatcher, stopWatcher } from './watcher/index';
 import { startIpnWorker, stopIpnWorker } from './ipn';
+import { startTelegramBot, stopTelegramBot } from './telegram/bot';
 import { logger } from './util/log';
 
 const log = logger('main');
@@ -12,6 +13,13 @@ async function main() {
   getDb();
 
   const server = startServer();
+
+  // Start the bot before the watcher so the first deposits of the run are
+  // already being announced. A Telegram failure must not stop the gateway.
+  await startTelegramBot().catch((e) => {
+    log.error('telegram bot failed to start', (e as Error).message);
+  });
+
   startWatcher();
   startIpnWorker();
 
@@ -19,6 +27,7 @@ async function main() {
     log.info(`${signal} received, shutting down`);
     stopWatcher();
     stopIpnWorker();
+    stopTelegramBot();
     server.close(() => {
       closeDb();
       process.exit(0);

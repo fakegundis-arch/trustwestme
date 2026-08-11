@@ -6,6 +6,7 @@ import { logger } from '../util/log';
 import * as repo from '../db/repo';
 import { requiredConfirmations } from '../api/serialize';
 import { queueDepositIpn } from '../ipn';
+import { events } from '../events';
 import type { ChainProvider, RawDeposit } from './types';
 
 import { buildBlockbookProviders } from './providers/blockbook';
@@ -118,6 +119,9 @@ async function handleDeposit(chainId: string, raw: RawDeposit): Promise<boolean>
     log.info(`${chainId}: new ${status} deposit ${amountStr} ${currency.ticker} `
       + `for ${user?.external_id} (${raw.txid})`);
     queueDepositIpn(row, addressRow.ipn_url);
+    // Only announce as "detected" while it is still confirming; a deposit that
+    // arrives already confirmed gets the credited alert below instead.
+    if (status === 'pending') events.emitEvent('deposit.pending', row);
   }
 
   if (becameCompleted) {
@@ -125,7 +129,9 @@ async function handleDeposit(chainId: string, raw: RawDeposit): Promise<boolean>
     const didCredit = repo.creditDeposit(row.id);
     if (didCredit) {
       log.info(`${chainId}: credited ${amountStr} ${currency.ticker} to ${user?.external_id}`);
-      queueDepositIpn({ ...row, status: 'completed', credited: 1 }, addressRow.ipn_url);
+      const completed = { ...row, status: 'completed', credited: 1 };
+      queueDepositIpn(completed, addressRow.ipn_url);
+      events.emitEvent('deposit.completed', completed);
       return true;
     }
   }

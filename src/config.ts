@@ -121,6 +121,29 @@ export const config = {
 
   /** Number of blocks to re-scan on startup, to catch anything missed. */
   reorgDepth: num('REORG_DEPTH', 50),
+
+  /**
+   * Telegram control bot. Uses long polling, so the gateway does not need a
+   * public URL or a webhook — it works from behind NAT.
+   */
+  telegram: {
+    enabled: bool('TELEGRAM_ENABLED', !!process.env.TELEGRAM_BOT_TOKEN),
+    token: process.env.TELEGRAM_BOT_TOKEN || '',
+    apiUrl: str('TELEGRAM_API_URL', 'https://api.telegram.org'),
+    /** The master chat: startup banner and deposit alerts land here. */
+    chatId: process.env.TELEGRAM_CHAT_ID || '',
+    /**
+     * Chats allowed to issue commands. Defaults to the master chat alone.
+     * Anyone not on this list is ignored — without it, whoever finds the bot
+     * could read every balance in the exchange.
+     */
+    adminChatIds: (process.env.TELEGRAM_ADMIN_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || '')
+      .split(',').map((s) => s.trim()).filter(Boolean),
+    /** Alert on first sight as well as on crediting. */
+    notifyPending: bool('TELEGRAM_NOTIFY_PENDING', true),
+    /** Send the command list to the master chat on startup. */
+    announceOnStart: bool('TELEGRAM_ANNOUNCE_ON_START', true),
+  },
 };
 
 export function assertSpendCapable() {

@@ -212,6 +212,77 @@ existing integration can keep sending whatever spelling it already uses. See
 
 ---
 
+## Telegram control bot
+
+A bot that watches the gateway and answers commands, so you can check on things
+without SSH. It uses long polling — no public URL, no webhook, works behind NAT.
+
+### Setup
+
+1. Message [@BotFather](https://t.me/BotFather), send `/newbot`, copy the token
+   into `TELEGRAM_BOT_TOKEN`.
+2. Send your new bot any message.
+3. Start the gateway. If the chat is not yet authorized the bot replies with the
+   chat id — paste it into `TELEGRAM_CHAT_ID` and restart.
+
+On startup it posts a banner and the full command list to your master chat, so
+you know it came up. Commands are also registered with Telegram, so typing `/`
+in the chat shows the menu.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `/help` | Every command (also sent on startup) |
+| `/status` | Watcher health, error count, pending deposits |
+| `/stats` | Deposit, withdrawal and balance totals |
+| `/balances` | Every currency holding a balance |
+| `/balance <CUR> [user]` | One currency, optionally for one user |
+| `/user <label>` | A user's addresses and balances |
+| `/address <label> <CUR>` | Show or create a deposit address |
+| `/deposits [n]` | Most recent deposits |
+| `/pending` | Deposits still confirming |
+| `/tx <id>` | Full detail on one transaction |
+| `/withdrawals [n]` | Most recent withdrawals |
+| `/chains` | Per-chain watcher state, green/red |
+| `/currencies` | All 21 currencies by chain |
+| `/scan [chain]` | Force a scan instead of waiting for the timer |
+| `/ipn` | Callback queue health and recent failures |
+| `/users [n]` | Recently created users |
+
+### Deposit alerts
+
+Every deposit posts to your master chat — once on sight, once on crediting:
+
+```
+🟡 Deposit detected
+0.0025 BTC
+User: user-4471
+Confirmations: 1/2
+Address: bc1q...
+
+✅ Deposit credited
+0.0025 BTC
+User: user-4471
+Address: bc1q...
+View on explorer
+/tx 8f14e45f-ceea-467a-9f6b-2c1d3e4a5b60
+```
+
+Set `TELEGRAM_NOTIFY_PENDING=false` if you only want the credited alert.
+
+### Access control
+
+Only chats in `TELEGRAM_ADMIN_CHAT_IDS` may run commands; everyone else is
+refused before any handler runs. This matters — the bot can read every balance
+and every user's addresses, so treat the token like a password. It cannot move
+money: there is no withdrawal or spend command, by design.
+
+A Telegram outage cannot affect deposits. The bot subscribes to gateway events
+rather than sitting in the crediting path, and failures are logged and dropped.
+
+---
+
 ## Deposit callbacks (IPN)
 
 Each deposit fires twice — once on first sight, once on confirmation:
@@ -279,10 +350,11 @@ callbacks — is complete.
 npm test
 ```
 
-41 tests cover derivation against published BIP39 vectors, address formats for
+66 tests cover derivation against published BIP39 vectors, address formats for
 every chain, tag attribution, dust rejection, request signing and replay
-rejection, and — most importantly — that a deposit seen on twenty consecutive
-scans is credited exactly once.
+rejection, the Telegram command surface against a stand-in Telegram server,
+and — most importantly — that a deposit seen on twenty consecutive scans is
+credited exactly once.
 
 ---
 
@@ -296,5 +368,7 @@ src/
   db/                SQLite schema and queries
   api/               HTTP server, auth, WestWallet-shaped routes
   watcher/providers/ one deposit scanner per chain family
+  telegram/          control bot: commands and deposit alerts
+  events.ts          domain events the bot subscribes to
   ipn.ts             signed callbacks with retries
 ```
