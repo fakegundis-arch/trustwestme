@@ -137,31 +137,42 @@ Base URL is your own server. All endpoints except `/health` need credentials.
 
 ### Authentication
 
-Two keys, as you asked — one public, one private:
+Two keys — one public, one private. The private key never leaves your server.
+
+**The default (`AUTH_MODE=auto`) accepts any of the three schemes below**, so an
+existing WestWallet integration works without touching it.
+
+**WestWallet-compatible** — what the official WestWallet SDKs send:
 
 | Header | Value |
 |---|---|
 | `X-API-KEY` | your public key |
-| `X-Nonce` | current unix seconds |
-| `X-Signature` | `hex(HMAC-SHA256(private_key, nonce + public_key))` |
+| `X-ACCESS-TIMESTAMP` | current unix seconds |
+| `X-ACCESS-SIGN` | `hex(HMAC-SHA256(private_key, timestamp + body))` |
 
-The private key never leaves your server. Nonces are single-use and must be
-within 5 minutes, so a captured request cannot be replayed.
+`body` is the JSON request body exactly as your client serialised it — for GET
+requests, the JSON serialisation of the query parameters. The signature is
+checked against the raw bytes received, and GET requests are matched against
+several serialisation styles (Python's `json.dumps` adds a space after `:` and
+`,`; most other languages do not), so any language's client verifies.
 
-```js
-const crypto = require('crypto');
-const nonce = String(Math.floor(Date.now() / 1000));
-const headers = {
-  'X-API-KEY': PUBLIC_KEY,
-  'X-Nonce': nonce,
-  'X-Signature': crypto.createHmac('sha256', PRIVATE_KEY)
-                       .update(nonce + PUBLIC_KEY).digest('hex'),
-};
+```python
+sign = hmac.new(secret_key.encode('utf-8'),
+                "{}{}".format(timestamp, dumped).encode('utf-8'),
+                hashlib.sha256).hexdigest()
 ```
 
-If your existing WestWallet integration signs differently, `buildSignature()` in
-`src/api/auth.ts` is the single function to adjust. Or set `AUTH_MODE=simple` to
-use plain `X-API-KEY` + `X-API-SECRET` headers instead.
+**Nonce scheme** — `X-API-KEY` + `X-Nonce` + `X-Signature`, where the signature
+is `hex(HMAC-SHA256(private_key, nonce + public_key))`. Nonces are single-use,
+so a captured request cannot be replayed.
+
+**Simple** — `X-API-KEY` + `X-API-SECRET`. Only acceptable behind TLS or on
+localhost.
+
+If a signature is being rejected and you cannot tell why, set `AUTH_DEBUG=true`.
+The log then shows the timestamp, the raw body, every payload variant that was
+tried and the signature each produced — enough to see exactly where your client
+differs.
 
 ### `POST /address/generate`
 
@@ -169,8 +180,11 @@ use plain `X-API-KEY` + `X-API-SECRET` headers instead.
 { "currency": "USDTTRC", "label": "user-4471", "ipn_url": "https://you/hook" }
 ```
 
-`label` is your user's id — it is what ties deposits back to an account. Calling
-it twice for the same user and currency returns the same address.
+`label` is **optional**, matching WestWallet's `generateAddress("BTC")`. Without
+it you get a fresh address per call and keep your own address-to-user mapping,
+exactly as WestWallet works. With it, the gateway keeps the mapping instead:
+repeat calls for the same user return the same address, deposits arrive already
+attributed, and `/wallet/balance?label=…` works per user. Pass one where you can.
 
 ```json
 {

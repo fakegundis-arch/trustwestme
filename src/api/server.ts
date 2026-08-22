@@ -9,7 +9,15 @@ const log = logger('http');
 export function createServer() {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '256kb' }));
+  // Keep the raw body. A WestWallet signature covers the exact bytes the client
+  // sent, so verifying against a re-serialised copy would fail whenever the
+  // client's JSON formatting differs from ours by so much as a space.
+  app.use(express.json({
+    limit: '256kb',
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: string }).rawBody = buf.toString('utf8');
+    },
+  }));
   app.use(express.urlencoded({ extended: false, limit: '256kb' }));
 
   // Log every request once it finishes. Anything that failed is logged at warn,

@@ -142,11 +142,19 @@ test('an unsupported currency is a clean 400', async () => {
   assert.match(body.message, /unsupported currency/);
 });
 
-test('address generation requires a user label', async () => {
-  const { status } = await call('/address/generate', {
+test('address generation works without a label, as WestWallet does', async () => {
+  // client.generateAddress("BTC") sends only a currency, and the caller keeps
+  // its own address-to-user mapping. Each unlabelled call gets a fresh address.
+  const first = await call('/address/generate', {
     method: 'POST', body: JSON.stringify({ currency: 'BTC' }),
   });
-  assert.equal(status, 400);
+  assert.equal(first.status, 200);
+  assert.match(first.body.address, /^bc1/);
+
+  const second = await call('/address/generate', {
+    method: 'POST', body: JSON.stringify({ currency: 'BTC' }),
+  });
+  assert.notEqual(second.body.address, first.body.address);
 });
 
 test('balance for a fresh user is zero', async () => {

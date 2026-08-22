@@ -68,10 +68,20 @@ export const config = {
   /** API credentials issued to your exchange. See `npm run keys`. */
   apiPublicKey: process.env.API_PUBLIC_KEY || '',
   apiPrivateKey: process.env.API_PRIVATE_KEY || '',
-  /** 'hmac' (WestWallet-style signed requests) or 'simple' (key + secret headers). */
-  authMode: str('AUTH_MODE', 'hmac') as 'hmac' | 'simple',
-  /** Reject signed requests whose nonce is older than this many seconds. */
+  /**
+   * 'auto'       accept any supported scheme (default — best for migration)
+   * 'westwallet' X-ACCESS-SIGN + X-ACCESS-TIMESTAMP, as the WestWallet SDKs send
+   * 'hmac'       X-Nonce + X-Signature over (nonce + public key)
+   * 'simple'     X-API-KEY + X-API-SECRET
+   */
+  authMode: str('AUTH_MODE', 'auto') as 'auto' | 'westwallet' | 'hmac' | 'simple',
+  /** Reject signed requests whose timestamp is further off than this. */
   authNonceWindowSec: num('AUTH_NONCE_WINDOW_SEC', 300),
+  /**
+   * Log what a failing signature was computed over. Invaluable when matching an
+   * existing integration; leave off in normal running.
+   */
+  authDebug: bool('AUTH_DEBUG', false),
 
   /** Secret used to sign outgoing IPN callbacks to your exchange. */
   ipnSecret: process.env.IPN_SECRET || '',

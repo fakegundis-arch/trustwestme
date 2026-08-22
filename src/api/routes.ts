@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { config } from '../config';
 import { listCurrencies, CURRENCIES } from '../currencies';
@@ -41,10 +42,14 @@ routes.post('/address/generate', h(async (req, res) => {
   const currency = param(req, 'currency');
   if (!currency) throw new ApiError(400, 'currency is required');
 
-  const userId = param(req, 'user_id') ?? param(req, 'label');
-  if (!userId) {
-    throw new ApiError(400, 'label (or user_id) is required — it identifies the user this address belongs to');
-  }
+  // WestWallet's generateAddress() takes only a currency, and the merchant
+  // stores the address-to-user mapping itself. That still works here: with no
+  // label we allocate a fresh identity and hand back a fresh address, and the
+  // caller maps it their own way. Passing a label is better where you can —
+  // the gateway then keeps the mapping, and repeat calls for the same user
+  // return the same address instead of consuming a new one each time.
+  const explicitUser = param(req, 'user_id') ?? param(req, 'label');
+  const userId = explicitUser ?? `auto-${randomUUID()}`;
 
   const identity = await getDepositIdentity({
     userExternalId: userId,
@@ -128,8 +133,9 @@ routes.get('/wallet/transactions', h(async (req, res) => {
   res.json({ transactions: result, count: result.length });
 }));
 
-// GET /wallet/transaction?id=<uid>
-routes.get('/wallet/transaction', h(async (req, res) => {
+// /wallet/transaction?id=<uid>
+// The WestWallet SDKs POST to this; GET is accepted too.
+const transactionHandler = h(async (req: Request, res: Response) => {
   const id = param(req, 'id');
   if (!id) throw new ApiError(400, 'id is required');
   const dep = repo.getDepositByUid(id);
@@ -137,7 +143,9 @@ routes.get('/wallet/transaction', h(async (req, res) => {
   const wd = repo.getWithdrawalByUid(id);
   if (wd) return res.json(withdrawalToJson(wd));
   throw new ApiError(404, `no transaction with id ${id}`);
-}));
+});
+routes.get('/wallet/transaction', transactionHandler);
+routes.post('/wallet/transaction', transactionHandler);
 
 // ---------------------------------------------------------------------------
 // POST /wallet/send — queue a withdrawal.
@@ -147,7 +155,7 @@ routes.get('/wallet/transaction', h(async (req, res) => {
 // chains is deliberately out of scope for this build. Withdrawals sit in
 // `created` until an operator processes them.
 // ---------------------------------------------------------------------------
-routes.post('/wallet/send', h(async (req, res) => {
+const withdrawalHandler = h(async (req: Request, res: Response) => {
   const cur = requireCurrency(param(req, 'currency') ?? '');
   const address = param(req, 'address');
   const amountRaw = param(req, 'amount');
@@ -182,7 +190,10 @@ routes.post('/wallet/send', h(async (req, res) => {
   });
   log.info(`withdrawal ${w.uid} queued: ${amountRaw} ${cur.ticker} -> ${address}`);
   res.json(withdrawalToJson(w));
-}));
+});
+// `/wallet/create_withdrawal` is the name the WestWallet SDKs call.
+routes.post('/wallet/send', withdrawalHandler);
+routes.post('/wallet/create_withdrawal', withdrawalHandler);
 
 // ---------------------------------------------------------------------------
 // Reference data
