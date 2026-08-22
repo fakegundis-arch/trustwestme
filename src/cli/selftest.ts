@@ -82,10 +82,30 @@ async function main() {
   console.log('\nConnectivity');
   try {
     const res = await fetch(BASE + '/health');
-    if (res.ok) ok('gateway is reachable', BASE);
-    else bad(`/health returned HTTP ${res.status}`);
+    const text = await res.text();
+
+    if (res.ok && text.includes('trustwestme')) {
+      ok('gateway is reachable', BASE);
+    } else if (text.trimStart().startsWith('<')) {
+      // Something answered, but it served HTML — so it is a different program.
+      bad('THIS PORT IS NOT THE GATEWAY',
+        `Port ${config.port} answered with an HTML page, so another service — very\n`
+        + '      likely your website — already owns it. The gateway either failed to\n'
+        + '      bind or is not running.\n\n'
+        + '      Find out what holds the port:\n'
+        + '        sudo ss -tlnp | grep :' + config.port + '\n\n'
+        + '      Then pick a free port in .env (for example PORT=8787), restart, and\n'
+        + '      point your website at the new port.');
+      return summary();
+    } else {
+      bad(`/health returned HTTP ${res.status}`, text.slice(0, 200));
+      return summary();
+    }
   } catch (e) {
-    bad('cannot reach the gateway', `${(e as Error).message}\n      Is it running? Check: systemctl status gateway`);
+    bad('cannot reach the gateway',
+      `${(e as Error).message}\n`
+      + '      Nothing is listening on this port. Is the gateway running?\n'
+      + '        systemctl status gateway   (or: npm start)');
     return summary();
   }
 
