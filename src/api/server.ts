@@ -12,8 +12,20 @@ export function createServer() {
   app.use(express.json({ limit: '256kb' }));
   app.use(express.urlencoded({ extended: false, limit: '256kb' }));
 
-  app.use((req, _res, next) => {
-    log.debug(`${req.method} ${req.path}`);
+  // Log every request once it finishes. Anything that failed is logged at warn,
+  // so a misconfigured caller shows up in the log without turning on debug —
+  // this is usually the fastest way to see what an integration is really doing.
+  app.use((req, res, next) => {
+    const started = Date.now();
+    res.on('finish', () => {
+      const line = `${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - started}ms)`;
+      if (res.statusCode >= 400) {
+        const from = req.socket.remoteAddress ?? 'unknown';
+        log.warn(`${line} from ${from}`);
+      } else {
+        log.debug(line);
+      }
+    });
     next();
   });
 
