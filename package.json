@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "keys": "tsx src/cli/keys.ts",
+    "selftest": "tsx src/cli/selftest.ts",
     "seed": "tsx src/cli/seed.ts",
     "addresses": "tsx src/cli/addresses.ts",
     "test": "tsx --test test/*.test.ts"
@@ -27,6 +28,6 @@
     "typescript": "^5.7.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }
