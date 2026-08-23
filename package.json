@@ -11,6 +11,7 @@
     "dev": "tsx watch src/index.ts",
     "keys": "tsx src/cli/keys.ts",
     "selftest": "tsx src/cli/selftest.ts",
+    "tls-proxy": "tsx src/cli/tls-proxy.ts",
     "seed": "tsx src/cli/seed.ts",
     "addresses": "tsx src/cli/addresses.ts",
     "test": "tsx --test test/*.test.ts"

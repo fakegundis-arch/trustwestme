@@ -130,7 +130,11 @@ routes.get('/wallet/transactions', h(async (req, res) => {
   if (type !== 'deposit' && !userId) {
     result.push(...repo.listWithdrawals({ currency, status, limit, offset }).map(withdrawalToJson));
   }
-  res.json({ transactions: result, count: result.length });
+  // The list is offered under several keys because this endpoint is not in the
+  // published SDKs, so the key a given client reads is not knowable in advance.
+  // Spring Boot ignores unknown JSON properties by default, so the extras are
+  // harmless to a Java caller and let one response satisfy any of them.
+  res.json({ transactions: result, result, transactions_count: result.length, count: result.length });
 }));
 
 // /wallet/transaction?id=<uid>
@@ -138,10 +142,10 @@ routes.get('/wallet/transactions', h(async (req, res) => {
 const transactionHandler = h(async (req: Request, res: Response) => {
   const id = param(req, 'id');
   if (!id) throw new ApiError(400, 'id is required');
-  const dep = repo.getDepositByUid(id);
-  if (dep) return res.json(depositToJson(dep));
-  const wd = repo.getWithdrawalByUid(id);
-  if (wd) return res.json(withdrawalToJson(wd));
+  // Accepts the numeric id a WestWallet client holds, or our UUID.
+  const found = repo.findTransaction(id);
+  if (found.deposit) return res.json(depositToJson(found.deposit));
+  if (found.withdrawal) return res.json(withdrawalToJson(found.withdrawal));
   throw new ApiError(404, `no transaction with id ${id}`);
 });
 routes.get('/wallet/transaction', transactionHandler);

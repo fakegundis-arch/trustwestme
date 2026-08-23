@@ -20,6 +20,22 @@ export function createServer() {
   }));
   app.use(express.urlencoded({ extended: false, limit: '256kb' }));
 
+  // Every WestWallet response carries an `error` field, and their clients test
+  // `if (response.error != "ok")` to decide whether a call succeeded. So a
+  // successful reply must say so explicitly — without this, a WestWallet client
+  // treats every 200 as a failure.
+  app.use((_req, res, next) => {
+    const sendJson = res.json.bind(res);
+    res.json = (body: unknown) => {
+      if (body && typeof body === 'object' && !Array.isArray(body)
+        && (body as Record<string, unknown>).error === undefined) {
+        return sendJson({ error: 'ok', ...(body as Record<string, unknown>) });
+      }
+      return sendJson(body);
+    };
+    next();
+  });
+
   // Log every request once it finishes. Anything that failed is logged at warn,
   // so a misconfigured caller shows up in the log without turning on debug —
   // this is usually the fastest way to see what an integration is really doing.

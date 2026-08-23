@@ -4,9 +4,17 @@ import { fromBaseUnits } from '../util/decimal';
 import type { DepositRow, WithdrawalRow } from '../db/repo';
 import { getUserById } from '../db/repo';
 
-/** Wire format for a transaction, matching the shape WestWallet returns. */
+/**
+ * Wire format for a transaction, matching the shape WestWallet returns.
+ *
+ * `id` is a NUMBER, because the WestWallet SDKs declare it as one
+ * (Go: `ID int \`json:"id"\``) and a client that parses it as an integer would
+ * choke on a UUID. The UUID is still exposed as `uid`, and either form is
+ * accepted when looking a transaction up.
+ */
 export interface TransactionJson {
-  id: string;
+  id: number;
+  uid: string;
   type: 'deposit' | 'withdrawal';
   currency: string;
   blockchain: string;
@@ -38,7 +46,8 @@ export function depositToJson(d: DepositRow): TransactionJson {
   const decimals = CURRENCIES[d.currency]?.decimals ?? 8;
   const user = getUserById(d.user_id);
   return {
-    id: d.uid,
+    id: d.id,
+    uid: d.uid,
     type: 'deposit',
     currency: d.currency,
     blockchain: d.chain,
@@ -59,7 +68,8 @@ export function depositToJson(d: DepositRow): TransactionJson {
 export function withdrawalToJson(w: WithdrawalRow): TransactionJson {
   const decimals = CURRENCIES[w.currency]?.decimals ?? 8;
   return {
-    id: w.uid,
+    id: w.id,
+    uid: w.uid,
     type: 'withdrawal',
     currency: w.currency,
     blockchain: w.chain,

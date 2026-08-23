@@ -100,8 +100,11 @@ function signedPayloadCandidates(req: AuthedRequest): string[] {
     pythonJson(query),              // {"currency": "BTC"}
     JSON.stringify(sortKeys(query)),
     pythonJson(sortKeys(query)),
+    // The JS client signs the timestamp alone when it sends no body, even
+    // though the parameters travel in the query string.
+    '',
+    '{}',
   );
-  if (Object.keys(query).length === 0) out.push('{}', '');
   return dedupe(out);
 }
 

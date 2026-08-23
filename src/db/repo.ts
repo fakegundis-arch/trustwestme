@@ -177,6 +177,25 @@ export function getDepositByUid(uid: string): DepositRow | undefined {
   return getDb().prepare('SELECT * FROM deposits WHERE uid = ?').get(uid) as DepositRow | undefined;
 }
 
+/**
+ * Look a transaction up by either identifier. WestWallet clients hold the
+ * numeric id; anything of ours may hold the UUID.
+ */
+export function findTransaction(id: string): { deposit?: DepositRow; withdrawal?: WithdrawalRow } {
+  const db = getDb();
+  if (/^\d+$/.test(id)) {
+    const n = Number(id);
+    const deposit = db.prepare('SELECT * FROM deposits WHERE id = ?').get(n) as DepositRow | undefined;
+    if (deposit) return { deposit };
+    const withdrawal = db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(n) as WithdrawalRow | undefined;
+    if (withdrawal) return { withdrawal };
+    return {};
+  }
+  const deposit = getDepositByUid(id);
+  if (deposit) return { deposit };
+  return { withdrawal: getWithdrawalByUid(id) };
+}
+
 export function pendingDeposits(chain?: string): DepositRow[] {
   const db = getDb();
   return chain
