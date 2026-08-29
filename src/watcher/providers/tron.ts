@@ -37,7 +37,11 @@ export function tronProvider(): ChainProvider {
 
       const deposits: RawDeposit[] = [];
 
-      await mapLimit(ctx.watched, 3, async (row) => {
+      // TronGrid allows three requests a second without an API key, and this
+      // provider makes two or three calls per address. The per-host rate
+      // limiter paces them; keeping concurrency at one avoids piling up a long
+      // queue of waiting requests behind it.
+      await mapLimit(ctx.watched, 1, async (row) => {
         // ---- native TRX ---------------------------------------------------
         try {
           const resp = await fetchJson<any>(

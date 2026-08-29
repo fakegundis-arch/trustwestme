@@ -1,6 +1,6 @@
 import { config } from '../../config';
 import { currenciesForChain } from '../../currencies';
-import { fetchJson, mapLimit } from '../../util/http';
+import { fetchJson, mapLimit, endpointList, tryEndpoints } from '../../util/http';
 import { logger } from '../../util/log';
 import type { ChainProvider, RawDeposit, ScanContext, ScanResult } from '../types';
 
@@ -24,10 +24,11 @@ interface BbTx {
 }
 interface BbAddressResp { transactions?: BbTx[] }
 
-export function blockbookProvider(chain: string, baseUrl: string): ChainProvider {
+export function blockbookProvider(chain: string, baseUrlSetting: string): ChainProvider {
   const log = logger(`watch:${chain}`);
   // Each UTXO chain carries exactly one currency.
   const currency = currenciesForChain(chain)[0];
+  const endpoints = endpointList(baseUrlSetting);
 
   return {
     chain,
@@ -38,14 +39,17 @@ export function blockbookProvider(chain: string, baseUrl: string): ChainProvider
       const watchedSet = new Set(ctx.watched.map((a) => normalize(chain, a.address)));
       const deposits: RawDeposit[] = [];
 
-      const perAddress = await mapLimit(ctx.watched, 4, async (row) => {
-        const url = `${baseUrl.replace(/\/$/, '')}/api/v2/address/${encodeURIComponent(row.address)}`
-          + `?details=txs&pageSize=50`;
+      // Concurrency stays low deliberately: these are shared public instances,
+      // and the per-host rate limiter paces the requests anyway.
+      const perAddress = await mapLimit(ctx.watched, 2, async (row) => {
         try {
-          const resp = await fetchJson<BbAddressResp>(url, { timeoutMs: 25000 });
+          const resp = await tryEndpoints(endpoints, (base) => fetchJson<BbAddressResp>(
+            `${base}/api/v2/address/${encodeURIComponent(row.address)}?details=txs&pageSize=50`,
+            { timeoutMs: 25000 },
+          ));
           return { row, txs: resp.transactions ?? [] };
         } catch (e) {
-          log.warn(`address scan failed for ${row.address}`, (e as Error).message);
+          log.warn(`address scan failed for ${row.address}`, describeEndpointFailure(e));
           return { row, txs: [] as BbTx[] };
         }
       });
@@ -82,6 +86,21 @@ export function blockbookProvider(chain: string, baseUrl: string): ChainProvider
       return { deposits, cursor: ctx.cursor };
     },
   };
+}
+
+/**
+ * A wall of HTML in the log is useless. Cloudflare and similar return a whole
+ * page on a block, so say what it means instead of printing the page.
+ */
+export function describeEndpointFailure(e: unknown): string {
+  const message = (e as Error)?.message ?? String(e);
+  if (message.includes('<!DOCTYPE') || message.includes('<html')) {
+    const status = message.match(/HTTP (\d{3})/)?.[1] ?? '';
+    return `HTTP ${status} — the endpoint returned a block page rather than data. `
+      + 'It is rate limiting or refusing this server. Configure another endpoint, '
+      + 'or run your own node.';
+  }
+  return message.slice(0, 300);
 }
 
 /** BCH addresses appear with and without the `bitcoincash:` prefix. */

@@ -1,6 +1,6 @@
 import { config } from '../../config';
 import { currenciesForChain } from '../../currencies';
-import { rpc, mapLimit } from '../../util/http';
+import { rpc, mapLimit, endpointList, tryEndpoints } from '../../util/http';
 import { parseHexOrDec } from '../../util/decimal';
 import { logger } from '../../util/log';
 import type { ChainProvider, RawDeposit, ScanContext, ScanResult } from '../types';
@@ -21,22 +21,40 @@ const MAX_RANGE = 200;
 /** Recipients per getLogs call — keeps the topic filter within node limits. */
 const TOPIC_CHUNK = 100;
 
-export function evmProvider(chain: string, url: string): ChainProvider {
+export function evmProvider(chain: string, urlSetting: string): ChainProvider {
   const log = logger(`watch:${chain}`);
   const currencies = currenciesForChain(chain);
   const native = currencies.find((c) => c.kind === 'native');
   const tokens = currencies.filter((c) => c.kind === 'token' && c.contract);
+  const endpoints = endpointList(urlSetting);
+
+  /** Same JSON-RPC call against each configured endpoint until one answers. */
+  const call = <T>(method: string, params: unknown[] = []): Promise<T> =>
+    tryEndpoints(endpoints, (base) => rpc<T>(base, method, params));
 
   return {
     chain,
     async scan(ctx: ScanContext): Promise<ScanResult> {
       if (ctx.watched.length === 0) return { deposits: [], cursor: ctx.cursor };
 
-      const latest = Number(parseHexOrDec(await rpc<string>(url, 'eth_blockNumber')));
+      const latest = Number(parseHexOrDec(await call<string>('eth_blockNumber')));
       if (!Number.isFinite(latest) || latest <= 0) throw new Error('eth_blockNumber returned nothing usable');
 
       // First run: start a short way back rather than replaying the whole chain.
-      const from = ctx.cursor ? Number(ctx.cursor) + 1 : Math.max(0, latest - config.reorgDepth);
+      let from = ctx.cursor ? Number(ctx.cursor) + 1 : Math.max(0, latest - config.reorgDepth);
+
+      // Free RPC providers refuse requests for blocks far behind the head,
+      // calling them archive requests. After a long outage the cursor would sit
+      // there and every pass would fail, so skip forward and say what was
+      // missed instead of stalling silently.
+      const oldest = Math.max(0, latest - config.evmMaxLookback);
+      if (from < oldest) {
+        log.warn(`cursor was ${latest - from} blocks behind, beyond what a public RPC will `
+          + `serve. Skipping to block ${oldest} — deposits between ${from} and ${oldest} `
+          + 'will not be seen. Use an archive-capable RPC to backfill.');
+        from = oldest;
+      }
+
       if (from > latest) return { deposits: [], cursor: String(latest) };
       const to = Math.min(latest, from + MAX_RANGE - 1);
 
@@ -49,7 +67,7 @@ export function evmProvider(chain: string, url: string): ChainProvider {
       if (native) {
         const blocks = await mapLimit(range(from, to), 4, async (n) => {
           try {
-            return await rpc<any>(url, 'eth_getBlockByNumber', ['0x' + n.toString(16), true]);
+            return await call<any>('eth_getBlockByNumber', ['0x' + n.toString(16), true]);
           } catch (e) {
             log.warn(`block ${n} fetch failed`, (e as Error).message);
             return null;
@@ -69,7 +87,7 @@ export function evmProvider(chain: string, url: string): ChainProvider {
             // successful receipt actually moved the money.
             let ok = true;
             try {
-              const receipt = await rpc<any>(url, 'eth_getTransactionReceipt', [tx.hash]);
+              const receipt = await call<any>('eth_getTransactionReceipt', [tx.hash]);
               ok = receipt && parseHexOrDec(receipt.status ?? '0x1') === 1n;
             } catch (e) {
               log.warn(`receipt lookup failed for ${tx.hash}`, (e as Error).message);
@@ -97,7 +115,7 @@ export function evmProvider(chain: string, url: string): ChainProvider {
         for (const chunk of chunked(recipients, TOPIC_CHUNK)) {
           let logs: any[];
           try {
-            logs = await rpc<any[]>(url, 'eth_getLogs', [{
+            logs = await call<any[]>('eth_getLogs', [{
               fromBlock: '0x' + from.toString(16),
               toBlock: '0x' + to.toString(16),
               address: token.contract,

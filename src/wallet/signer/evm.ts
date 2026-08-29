@@ -1,7 +1,7 @@
 import { TW } from '@trustwallet/wallet-core';
 import { config } from '../../config';
 import type { CurrencyDef } from '../../currencies';
-import { rpc } from '../../util/http';
+import { rpc, endpointList, tryEndpoints } from '../../util/http';
 import { parseHexOrDec } from '../../util/decimal';
 import { logger } from '../../util/log';
 import { getCore, coinTypeByName } from '../core';
@@ -23,41 +23,44 @@ export function evmSigner(chainId: string): ChainSigner {
   const meta = EVM[chainId];
   if (!meta) throw new Error(`${chainId} is not an EVM chain`);
 
+  // Endpoints are tried in order. Re-sending an already-signed transaction to a
+  // second node is harmless — it has the same hash and the network deduplicates.
+  const call = <T>(method: string, params: unknown[] = []): Promise<T> =>
+    tryEndpoints(endpointList(meta.rpcUrl()), (base) => rpc<T>(base, method, params));
+
   return {
     async balance(currency: CurrencyDef, address: string): Promise<bigint> {
-      const url = meta.rpcUrl();
       if (currency.kind === 'native') {
-        return parseHexOrDec(await rpc<string>(url, 'eth_getBalance', [address, 'latest']));
+        return parseHexOrDec(await call<string>('eth_getBalance', [address, 'latest']));
       }
       // balanceOf(address) — selector 0x70a08231, argument left-padded to 32 bytes.
       const data = '0x70a08231' + address.replace(/^0x/, '').toLowerCase().padStart(64, '0');
-      const result = await rpc<string>(url, 'eth_call',
+      const result = await call<string>('eth_call',
         [{ to: currency.contract, data }, 'latest']);
       return parseHexOrDec(result && result !== '0x' ? result : '0x0');
     },
 
     async send(req: SendRequest): Promise<SendResult> {
-      const url = meta.rpcUrl();
       const core = await getCore();
       const coin = coinTypeByName(core, meta.coin);
       const key = await privateKeyBytes(chainId, req.fromIndex);
 
       const [nonceRaw, gasPriceRaw] = await Promise.all([
-        rpc<string>(url, 'eth_getTransactionCount', [req.fromAddress, 'pending']),
-        rpc<string>(url, 'eth_gasPrice'),
+        call<string>('eth_getTransactionCount', [req.fromAddress, 'pending']),
+        call<string>('eth_gasPrice'),
       ]);
       const nonce = parseHexOrDec(nonceRaw);
       // A little headroom so the transaction is not stuck if the price ticks up.
       const gasPrice = (parseHexOrDec(gasPriceRaw) * 12n) / 10n;
 
       const isNative = req.currency.kind === 'native';
-      const gasLimit = isNative ? 21000n : await estimateTokenGas(url, req);
+      const gasLimit = isNative ? 21000n : await estimateTokenGas(call, req);
 
       let amount: bigint;
       let fee = gasPrice * gasLimit;
 
       if (isNative) {
-        const balance = parseHexOrDec(await rpc<string>(url, 'eth_getBalance', [req.fromAddress, 'latest']));
+        const balance = parseHexOrDec(await call<string>('eth_getBalance', [req.fromAddress, 'latest']));
         if (req.sweep) {
           // Everything except what the transaction itself costs.
           if (balance <= fee) {
@@ -73,7 +76,7 @@ export function evmSigner(chainId: string): ChainSigner {
       } else {
         // A token transfer is paid for in the chain's native coin, which the
         // address must already hold — this is the classic stuck-deposit case.
-        const nativeBalance = parseHexOrDec(await rpc<string>(url, 'eth_getBalance', [req.fromAddress, 'latest']));
+        const nativeBalance = parseHexOrDec(await call<string>('eth_getBalance', [req.fromAddress, 'latest']));
         if (nativeBalance < fee) {
           const nativeName = chainId === 'bsc' ? 'BNB' : 'ETH';
           throw new Error(`this address holds no ${nativeName} to pay gas. Send about `
@@ -115,7 +118,7 @@ export function evmSigner(chainId: string): ChainSigner {
       if (signed.error) throw new Error(`signing failed: ${signed.errorMessage || signed.error}`);
 
       const rawTx = '0x' + hexOf(signed.encoded);
-      const txid = await rpc<string>(url, 'eth_sendRawTransaction', [rawTx]);
+      const txid = await call<string>('eth_sendRawTransaction', [rawTx]);
       log.info(`${chainId}: broadcast ${txid}`);
 
       return { txid, sent: amount, fee };
@@ -123,12 +126,14 @@ export function evmSigner(chainId: string): ChainSigner {
   };
 }
 
-async function estimateTokenGas(url: string, req: SendRequest): Promise<bigint> {
+type RpcCall = <T>(method: string, params?: unknown[]) => Promise<T>;
+
+async function estimateTokenGas(call: RpcCall, req: SendRequest): Promise<bigint> {
   const data = TRANSFER_SELECTOR
     + req.toAddress.replace(/^0x/, '').toLowerCase().padStart(64, '0')
     + req.amount.toString(16).padStart(64, '0');
   try {
-    const estimate = parseHexOrDec(await rpc<string>(url, 'eth_estimateGas', [{
+    const estimate = parseHexOrDec(await call<string>('eth_estimateGas', [{
       from: req.fromAddress, to: req.currency.contract, data,
     }]));
     // Estimates run tight; a margin avoids an out-of-gas revert.

@@ -7,6 +7,7 @@ import * as repo from '../db/repo';
 import { requiredConfirmations } from '../api/serialize';
 import { queueDepositIpn } from '../ipn';
 import { sharedAddressFor } from '../wallet/derive';
+import { setRateLimit } from '../util/http';
 import { events } from '../events';
 import type { ChainProvider, RawDeposit } from './types';
 
@@ -25,7 +26,27 @@ const log = logger('watcher');
 /** Chains already reported as unconfigured, so the notice is not repeated. */
 const unconfiguredWarned = new Set<string>();
 
+let rateLimitsApplied = false;
+
+/**
+ * Register the per-host request limits before any scanning starts. Public
+ * endpoints suspend a caller that exceeds them, so pacing is what keeps a scan
+ * working rather than failing in bursts.
+ */
+function applyRateLimits() {
+  if (rateLimitsApplied) return;
+  rateLimitsApplied = true;
+  for (const [host, rps] of Object.entries(config.rateLimits)) {
+    if (rps > 0) setRateLimit(host, rps);
+  }
+  if (!config.rpc.tronApiKey) {
+    log.info('no TRON_API_KEY set — Tron scanning is limited to 2 requests a second. '
+      + 'A free key from trongrid.io removes this.');
+  }
+}
+
 export function buildProviders(): ChainProvider[] {
+  applyRateLimits();
   const all: ChainProvider[] = [
     ...buildBlockbookProviders(),
     ...buildEvmProviders(),

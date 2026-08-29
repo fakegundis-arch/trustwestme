@@ -2,7 +2,7 @@ import { TW } from '@trustwallet/wallet-core';
 import { config } from '../../config';
 import { getChain } from '../../chains';
 import type { CurrencyDef } from '../../currencies';
-import { fetchJson } from '../../util/http';
+import { fetchJson, endpointList, tryEndpoints } from '../../util/http';
 import { logger } from '../../util/log';
 import { getCore, coinTypeByName } from '../core';
 import { privateKeyBytes } from '../keys';
@@ -10,8 +10,8 @@ import { hexOf, type ChainSigner, type SendRequest, type SendResult } from './ty
 
 const log = logger('sign:utxo');
 
-/** Blockbook base URL per chain. */
-function blockbookUrl(chainId: string): string {
+/** Blockbook base URLs per chain — a comma-separated list is tried in order. */
+function blockbookUrls(chainId: string): string[] {
   const urls: Record<string, string> = {
     bitcoin: config.rpc.bitcoin,
     litecoin: config.rpc.litecoin,
@@ -20,9 +20,9 @@ function blockbookUrl(chainId: string): string {
     bitcoincash: config.rpc.bitcoincash,
     zcash: config.rpc.zcash,
   };
-  const url = urls[chainId];
-  if (!url) throw new Error(`${chainId} is not a UTXO chain`);
-  return url.replace(/\/$/, '');
+  const setting = urls[chainId];
+  if (!setting) throw new Error(`${chainId} is not a UTXO chain`);
+  return endpointList(setting);
 }
 
 /** Satoshis per byte. Deliberately generous — a stuck sweep is worse. */
@@ -103,20 +103,23 @@ export function utxoSigner(chainId: string): ChainSigner {
 }
 
 async function fetchUtxos(chainId: string, address: string): Promise<BbUtxo[]> {
-  const url = `${blockbookUrl(chainId)}/api/v2/utxo/${encodeURIComponent(address)}`;
-  const utxos = await fetchJson<BbUtxo[]>(url, { timeoutMs: 25000 });
+  const utxos = await tryEndpoints(blockbookUrls(chainId), (base) => fetchJson<BbUtxo[]>(
+    `${base}/api/v2/utxo/${encodeURIComponent(address)}`, { timeoutMs: 25000 },
+  ));
   return (utxos ?? []).filter((u) => BigInt(u.value) > 0n);
 }
 
 async function broadcast(chainId: string, rawTxHex: string): Promise<string> {
-  const url = `${blockbookUrl(chainId)}/api/v2/sendtx/`;
-  const result = await fetchJson<{ result?: string; error?: { message?: string } }>(url, {
-    method: 'POST',
-    body: rawTxHex,
-    headers: { 'content-type': 'text/plain' },
-    timeoutMs: 30000,
-    retries: 0, // never risk broadcasting the same transaction twice
-  });
+  // Falling through to another node is safe: the transaction is already signed,
+  // so re-broadcasting it carries the same hash and the network deduplicates.
+  const result = await tryEndpoints(blockbookUrls(chainId), (base) =>
+    fetchJson<{ result?: string; error?: { message?: string } }>(`${base}/api/v2/sendtx/`, {
+      method: 'POST',
+      body: rawTxHex,
+      headers: { 'content-type': 'text/plain' },
+      timeoutMs: 30000,
+      retries: 0,
+    }));
   if (result?.error) throw new Error(`broadcast rejected: ${result.error.message ?? 'unknown'}`);
   if (!result?.result) throw new Error('broadcast returned no transaction id');
   return result.result;

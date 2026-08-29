@@ -95,16 +95,24 @@ export const config = {
   watcherChains: (process.env.WATCHER_CHAINS || '')
     .split(',').map((s) => s.trim()).filter(Boolean),
 
-  /** Per-chain data sources. All have working public defaults. */
+  /**
+   * Per-chain data sources. All have working public defaults.
+   *
+   * Each accepts a comma-separated list and they are tried in order, because a
+   * single free endpoint will eventually rate-limit, block or go down, and one
+   * unreachable host should not stop a chain being scanned.
+   */
   rpc: {
-    bitcoin: str('BTC_BLOCKBOOK_URL', 'https://btc1.trezor.io'),
-    litecoin: str('LTC_BLOCKBOOK_URL', 'https://ltc1.trezor.io'),
-    dogecoin: str('DOGE_BLOCKBOOK_URL', 'https://doge1.trezor.io'),
-    dash: str('DASH_BLOCKBOOK_URL', 'https://dash1.trezor.io'),
-    bitcoincash: str('BCH_BLOCKBOOK_URL', 'https://bch1.trezor.io'),
-    zcash: str('ZEC_BLOCKBOOK_URL', 'https://zec1.trezor.io'),
-    ethereum: str('ETH_RPC_URL', 'https://ethereum-rpc.publicnode.com'),
-    bsc: str('BSC_RPC_URL', 'https://bsc-rpc.publicnode.com'),
+    bitcoin: str('BTC_BLOCKBOOK_URL', 'https://btc1.trezor.io,https://btc2.trezor.io'),
+    litecoin: str('LTC_BLOCKBOOK_URL', 'https://ltc1.trezor.io,https://ltc2.trezor.io'),
+    dogecoin: str('DOGE_BLOCKBOOK_URL', 'https://doge1.trezor.io,https://doge2.trezor.io'),
+    dash: str('DASH_BLOCKBOOK_URL', 'https://dash1.trezor.io,https://dash2.trezor.io'),
+    bitcoincash: str('BCH_BLOCKBOOK_URL', 'https://bch1.trezor.io,https://bch2.trezor.io'),
+    zcash: str('ZEC_BLOCKBOOK_URL', 'https://zec1.trezor.io,https://zec2.trezor.io'),
+    ethereum: str('ETH_RPC_URL',
+      'https://eth.llamarpc.com,https://rpc.ankr.com/eth,https://ethereum-rpc.publicnode.com'),
+    bsc: str('BSC_RPC_URL',
+      'https://bsc-dataseed.binance.org,https://bsc-dataseed1.defibit.io,https://bsc-rpc.publicnode.com'),
     tron: str('TRON_API_URL', 'https://api.trongrid.io'),
     tronApiKey: process.env.TRON_API_KEY || '',
     solana: str('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
@@ -131,6 +139,36 @@ export const config = {
 
   /** Number of blocks to re-scan on startup, to catch anything missed. */
   reorgDepth: num('REORG_DEPTH', 50),
+
+  /**
+   * How far behind the chain head the EVM scanner is willing to start.
+   * Free RPC providers charge for, or refuse, requests for older blocks
+   * ("archive requests"), so after a long outage the cursor is fast-forwarded
+   * and the gap reported rather than every request failing.
+   */
+  evmMaxLookback: num('EVM_MAX_LOOKBACK_BLOCKS', 5000),
+
+  /**
+   * Requests per second per host. Public endpoints publish tight limits and
+   * suspend the caller for seconds when they are exceeded, so it is better to
+   * pace requests than to be refused.
+   */
+  rateLimits: {
+    'api.trongrid.io': num('TRON_RPS', process.env.TRON_API_KEY ? 10 : 2),
+    'btc1.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'btc2.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'ltc1.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'ltc2.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'doge1.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'doge2.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'dash1.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'dash2.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'bch1.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'bch2.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'zec1.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'zec2.trezor.io': num('BLOCKBOOK_RPS', 3),
+    'api.mainnet-beta.solana.com': num('SOLANA_RPS', 4),
+  } as Record<string, number>,
 
   /**
    * Telegram control bot. Uses long polling, so the gateway does not need a
