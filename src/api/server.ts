@@ -92,9 +92,12 @@ export function startServer() {
   // trace that never names the actual problem.
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      log.error(`port ${config.port} is already in use — another service is listening on it `
-        + `(often the website itself). Set PORT to a free port in .env, for example PORT=8787, `
-        + `then restart and point your site at the new port.`);
+      log.error(`port ${config.port} is already in use. Most often this is the gateway `
+        + `itself already running under systemd — check with "systemctl status gateway", `
+        + `and use "systemctl restart gateway" rather than starting a second copy. `
+        + `Otherwise another service owns the port: find it with `
+        + `"ss -tlnp | grep :${config.port}" and either stop it or set a different `
+        + `PORT in .env.`);
     } else if (err.code === 'EACCES') {
       log.error(`not allowed to bind port ${config.port}. Ports below 1024 need root; `
         + `pick a higher one in .env.`);

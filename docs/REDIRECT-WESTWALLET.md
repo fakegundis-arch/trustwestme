@@ -57,24 +57,44 @@ deleting that one line restores normal behaviour immediately.
 ## If port 443 is free
 
 The setup script tells you when nothing owns 443, and the built-in proxy handles
-it. Run it under systemd so it survives a reboot:
+it. Run it under systemd so it survives a reboot.
+
+The certificate is created root-owned, so first let the service account read it.
+The CA's private key stays readable only by root — that one must never be
+exposed, since anything holding it can issue certificates this machine trusts:
+
+```bash
+chmod 755 /etc/gateway-tls
+chown gateway:gateway /etc/gateway-tls/server.crt /etc/gateway-tls/server.key
+chmod 640 /etc/gateway-tls/server.key
+ls -l /etc/gateway-tls          # ca.key must still be root-only
+```
 
 ```ini
 # /etc/systemd/system/gateway-tls.service
 [Unit]
 Description=TLS front end for the payment gateway
 After=network-online.target gateway.service
+Wants=gateway.service
 
 [Service]
 Type=simple
-User=root
+User=gateway
+Group=gateway
 WorkingDirectory=/opt/gateway/app
 Environment=TLS_CERT=/etc/gateway-tls/server.crt
 Environment=TLS_KEY=/etc/gateway-tls/server.key
+Environment=TLS_PROXY_PORT=443
+Environment=TLS_PROXY_HOST=127.0.0.1
 Environment=TLS_TARGET_PORT=8787
 ExecStart=/usr/bin/node dist/cli/tls-proxy.js
 Restart=always
 RestartSec=10
+
+# Binding 443 normally needs root; this grants just that one capability
+# instead, so the proxy runs as an ordinary account.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
@@ -82,7 +102,10 @@ WantedBy=multi-user.target
 
 ```bash
 systemctl daemon-reload && systemctl enable --now gateway-tls
+systemctl status gateway-tls --no-pager
 ```
+
+It listens on `127.0.0.1` only, so nothing outside the machine can reach it.
 
 ## What this costs you
 
