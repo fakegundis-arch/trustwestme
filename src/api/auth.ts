@@ -67,6 +67,26 @@ function header(req: Request, name: string): string {
 }
 
 /**
+ * First of these headers that is present.
+ *
+ * Clients differ on what they call the same thing, and every scheme here still
+ * requires the private key, so accepting a few spellings costs nothing in
+ * strength and saves a round of guessing.
+ */
+function firstHeader(req: Request, names: string[]): string {
+  for (const name of names) {
+    const value = header(req, name);
+    if (value) return value;
+  }
+  return '';
+}
+
+const SIGN_HEADERS = ['x-access-sign', 'x-access-signature', 'x-sign', 'x-signature-sign'];
+const TIMESTAMP_HEADERS = ['x-access-timestamp', 'x-timestamp', 'x-access-ts'];
+const SECRET_KEY_HEADERS = ['x-api-secret', 'x-secret', 'x-secret-key', 'x-private-key',
+  'x-api-private-key'];
+
+/**
  * The payloads a WestWallet client might have signed for this request.
  *
  * For a POST we have the exact bytes. For a GET the client signed a JSON dump
@@ -169,11 +189,13 @@ export function authenticate(req: AuthedRequest, res: Response, next: NextFuncti
   if (!key) return deny(res, 'invalid credentials');
 
   const mode = config.authMode;
-  const accessSign = header(req, 'x-access-sign');
-  const accessTs = header(req, 'x-access-timestamp');
+  const accessTs = firstHeader(req, TIMESTAMP_HEADERS);
   const nonce = header(req, 'x-nonce');
   const signature = header(req, 'x-signature');
-  const secret = header(req, 'x-api-secret');
+  const secret = firstHeader(req, SECRET_KEY_HEADERS);
+  // A plain `X-Signature` alongside a timestamp rather than a nonce is the
+  // WestWallet scheme under a different header name.
+  const accessSign = firstHeader(req, SIGN_HEADERS) || (accessTs && !nonce ? signature : '');
 
   const allow = (scheme: string) => mode === 'auto' || mode === scheme;
 
@@ -225,9 +247,39 @@ export function authenticate(req: AuthedRequest, res: Response, next: NextFuncti
     return next();
   }
 
+  // The key was recognised but no scheme was. That means the caller signs in a
+  // way this does not know about yet, so report what it actually sent —
+  // otherwise the only way forward is guesswork.
+  reportUnknownScheme(req);
   return deny(res, 'no recognised authentication headers. Send either '
     + 'X-ACCESS-SIGN + X-ACCESS-TIMESTAMP (WestWallet style), '
     + 'X-Nonce + X-Signature, or X-API-SECRET.');
+}
+
+/** Header names never worth printing in full. */
+const SECRET_HEADERS = /(secret|sign|token|password|auth|key)/i;
+
+function reportUnknownScheme(req: AuthedRequest) {
+  const names = Object.keys(req.headers).sort();
+  log.warn(`unrecognised auth scheme on ${req.method} ${req.originalUrl}`);
+  log.warn(`  headers received: ${names.join(', ')}`);
+
+  if (config.authDebug) {
+    for (const name of names) {
+      const raw = req.headers[name];
+      const value = Array.isArray(raw) ? raw.join(',') : String(raw ?? '');
+      // Show enough of a credential to identify it without printing it.
+      const shown = SECRET_HEADERS.test(name) && value.length > 12
+        ? `${value.slice(0, 6)}…${value.slice(-4)} (${value.length} chars)`
+        : value;
+      log.warn(`    ${name}: ${shown}`);
+    }
+    const body = req.rawBody ?? '';
+    if (body) log.warn(`  body: ${body.slice(0, 500)}`);
+    if (req.method === 'GET') log.warn(`  query: ${JSON.stringify(req.query)}`);
+  } else {
+    log.warn('  set AUTH_DEBUG=true in .env and restart to see the header values');
+  }
 }
 
 function deny(res: Response, message: string) {
