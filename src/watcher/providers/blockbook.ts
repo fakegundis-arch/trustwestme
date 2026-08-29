@@ -1,6 +1,8 @@
 import { config } from '../../config';
 import { currenciesForChain } from '../../currencies';
 import { fetchJson, mapLimit, endpointList, tryEndpoints } from '../../util/http';
+import * as repo from '../../db/repo';
+import { fetchAddressOutputs, supportsChain, type AddressOutput } from './blockchair';
 import { logger } from '../../util/log';
 import type { ChainProvider, RawDeposit, ScanContext, ScanResult } from '../types';
 
@@ -47,15 +49,50 @@ export function blockbookProvider(chain: string, baseUrlSetting: string): ChainP
             `${base}/api/v2/address/${encodeURIComponent(row.address)}?details=txs&pageSize=50`,
             { timeoutMs: 25000 },
           ));
-          return { row, txs: resp.transactions ?? [] };
+          return { row, txs: resp.transactions ?? [], fallback: null as AddressOutput[] | null };
         } catch (e) {
+          // Blockbook refused. Blockchair covers the same chains and is
+          // independent of Trezor, so a block on one does not stop the chain.
+          if (supportsChain(chain)) {
+            try {
+              const outputs = await fetchAddressOutputs(chain, row.address);
+              log.debug(`${row.address}: served by blockchair after blockbook refused`);
+              return { row, txs: [] as BbTx[], fallback: outputs };
+            } catch (fallbackError) {
+              log.warn(`both sources failed for ${row.address}`,
+                describeEndpointFailure(fallbackError));
+              return { row, txs: [] as BbTx[], fallback: null };
+            }
+          }
           log.warn(`address scan failed for ${row.address}`, describeEndpointFailure(e));
-          return { row, txs: [] as BbTx[] };
+          return { row, txs: [] as BbTx[], fallback: null };
         }
       });
 
-      for (const { row, txs } of perAddress) {
+      for (const { row, txs, fallback } of perAddress) {
         const target = normalize(chain, row.address);
+
+        // Blockchair returns the paying outputs directly, without the inputs,
+        // so a self-send cannot be spotted from the response. Transactions this
+        // gateway broadcast itself are filtered by txid instead — otherwise the
+        // change from a sweep would be credited as a fresh deposit.
+        if (fallback) {
+          for (const out of fallback) {
+            if (repo.isOwnTransaction(chain, out.txid)) continue;
+            deposits.push({
+              currency: currency.ticker,
+              address: row.address,
+              tag: null,
+              txid: out.txid,
+              outputIndex: out.outputIndex,
+              amount: out.value,
+              confirmations: out.confirmations,
+              blockHeight: out.blockHeight,
+            });
+          }
+          continue;
+        }
+
         for (const tx of txs) {
           // Skip transactions we sent ourselves — otherwise change returning to
           // a user's own address would be credited as a fresh deposit.

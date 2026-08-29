@@ -274,6 +274,40 @@ export function getWithdrawalByUid(uid: string): WithdrawalRow | undefined {
   return getDb().prepare('SELECT * FROM withdrawals WHERE uid = ?').get(uid) as WithdrawalRow | undefined;
 }
 
+/**
+ * Did this gateway broadcast this transaction?
+ *
+ * A sweep sends change back to the address it spent from, which looks exactly
+ * like an incoming payment. Blockbook lets us spot that from the inputs, but
+ * other sources return only the outputs — so outgoing transactions are recorded
+ * and matched by id, and never credited as deposits.
+ */
+export function isOwnTransaction(chain: string, txid: string): boolean {
+  const row = getDb().prepare(
+    'SELECT 1 FROM withdrawals WHERE chain = ? AND txid = ? LIMIT 1',
+  ).get(chain, txid);
+  return row !== undefined;
+}
+
+/** Record a transaction this gateway broadcast, so it is never re-credited. */
+export function recordSentTransaction(w: {
+  currency: string; chain: string; address: string; tag: string | null;
+  amountUnits: bigint; txid: string; description: string | null;
+}): WithdrawalRow {
+  const db = getDb();
+  const existing = db.prepare('SELECT * FROM withdrawals WHERE chain = ? AND txid = ?')
+    .get(w.chain, w.txid) as WithdrawalRow | undefined;
+  if (existing) return existing;
+
+  const uid = randomUUID();
+  db.prepare(`INSERT INTO withdrawals
+    (uid, currency, chain, address, tag, amount_units, status, txid, description, created_at, updated_at)
+    VALUES (?,?,?,?,?,?, 'completed', ?,?,?,?)`)
+    .run(uid, w.currency, w.chain, w.address, w.tag, w.amountUnits.toString(),
+         w.txid, w.description, now(), now());
+  return db.prepare('SELECT * FROM withdrawals WHERE uid = ?').get(uid) as WithdrawalRow;
+}
+
 export function listWithdrawals(filter: { currency?: string; status?: string; limit?: number; offset?: number }): WithdrawalRow[] {
   const where: string[] = [];
   const args: unknown[] = [];

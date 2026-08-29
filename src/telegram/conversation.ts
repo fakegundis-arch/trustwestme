@@ -352,6 +352,19 @@ async function stepWithdraw(chatId: number, flow: Flow, answer: string): Promise
         });
         sentTotal += result.sent;
         remaining -= result.sent;
+
+        // Record it so the watcher recognises the transaction as ours. Without
+        // this, change returning to the source address reads as a new deposit
+        // on any source that reports outputs without inputs.
+        repo.recordSentTransaction({
+          currency: currency.ticker,
+          chain: currency.chain,
+          address: flow.data.destination,
+          tag: null,
+          amountUnits: result.sent,
+          txid: result.txid,
+          description: `telegram withdrawal from ${source.address}`,
+        });
         const link = CHAINS[currency.chain]?.explorerTx?.replace('{tx}', result.txid);
         results.push(`✅ ${esc(fromBaseUnits(result.sent, currency.decimals))} ${esc(currency.ticker)}`
           + (link ? `\n   <a href="${esc(link)}">${esc(result.txid.slice(0, 20))}…</a>` : `\n   ${code(result.txid)}`));

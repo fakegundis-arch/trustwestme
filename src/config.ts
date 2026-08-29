@@ -113,6 +113,13 @@ export const config = {
       'https://eth.llamarpc.com,https://rpc.ankr.com/eth,https://ethereum-rpc.publicnode.com'),
     bsc: str('BSC_RPC_URL',
       'https://bsc-dataseed.binance.org,https://bsc-dataseed1.defibit.io,https://bsc-rpc.publicnode.com'),
+    /**
+     * Second source for the UTXO chains, used when Blockbook refuses. Free
+     * without a key but heavily rate limited; a key raises the allowance.
+     */
+    blockchair: str('BLOCKCHAIR_API_URL', 'https://api.blockchair.com'),
+    blockchairKey: process.env.BLOCKCHAIR_API_KEY || '',
+
     tron: str('TRON_API_URL', 'https://api.trongrid.io'),
     tronApiKey: process.env.TRON_API_KEY || '',
     solana: str('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
@@ -168,6 +175,8 @@ export const config = {
     'zec1.trezor.io': num('BLOCKBOOK_RPS', 3),
     'zec2.trezor.io': num('BLOCKBOOK_RPS', 3),
     'api.mainnet-beta.solana.com': num('SOLANA_RPS', 4),
+    // Blockchair's free tier is about one request every two seconds.
+    'api.blockchair.com': num('BLOCKCHAIR_RPS', process.env.BLOCKCHAIR_API_KEY ? 5 : 0.5),
   } as Record<string, number>,
 
   /**

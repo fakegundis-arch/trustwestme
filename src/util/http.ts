@@ -26,14 +26,24 @@ const USER_AGENT = 'trustwestme/1.0 (+https://github.com/fakegundis-arch/trustwe
  * seconds at a time, so scanning fails in bursts rather than gracefully.
  * A token bucket per host keeps every caller under the limit collectively.
  */
-interface Bucket { tokens: number; lastRefill: number; rps: number }
+interface Bucket { tokens: number; lastRefill: number; rps: number; capacity: number }
 const buckets = new Map<string, Bucket>();
 
-/** Requests per second allowed to a host. Call before any request is made. */
+/**
+ * Requests per second allowed to a host. Values below 1 are meaningful — some
+ * free APIs allow one request every couple of seconds — so the bucket holds at
+ * least one token however slow the refill, otherwise a rate under 1/s could
+ * never accumulate enough to send anything.
+ */
 export function setRateLimit(host: string, rps: number): void {
+  const capacity = Math.max(1, rps);
   const existing = buckets.get(host);
-  if (existing) existing.rps = rps;
-  else buckets.set(host, { tokens: rps, lastRefill: Date.now(), rps });
+  if (existing) {
+    existing.rps = rps;
+    existing.capacity = capacity;
+  } else {
+    buckets.set(host, { tokens: capacity, lastRefill: Date.now(), rps, capacity });
+  }
 }
 
 async function acquireSlot(host: string): Promise<void> {
@@ -43,7 +53,7 @@ async function acquireSlot(host: string): Promise<void> {
   for (;;) {
     const now = Date.now();
     const elapsed = (now - bucket.lastRefill) / 1000;
-    bucket.tokens = Math.min(bucket.rps, bucket.tokens + elapsed * bucket.rps);
+    bucket.tokens = Math.min(bucket.capacity, bucket.tokens + elapsed * bucket.rps);
     bucket.lastRefill = now;
 
     if (bucket.tokens >= 1) {
