@@ -29,9 +29,15 @@ address for every user, on every chain, using standard BIP44 paths.
 Your user #1 gets index 1, user #2 gets index 2, and so on. One number
 identifies a user's whole set of addresses across all 15 chains.
 
-The payoff is real: **type your seed phrase into the Trust Wallet app and you
-are looking at every user's deposit address and every coin in them.** Nothing is
-custodial to a third party, and there is no account with anyone to lose.
+The payoff is real: **your seed phrase alone controls every user's deposit
+address and every coin in them.** Nothing is custodial to a third party, and
+there is no account with anyone to lose.
+
+One caveat worth knowing before you need it: importing the seed into the Trust
+Wallet app shows you index 0 only. User addresses start at index 1, so their
+balances do not appear in the app even though the same phrase controls them.
+Use `/key` or `/withdraw` in the Telegram bot to reach those — see
+[Recovering funds](#recovering-funds-from-a-deposit-address).
 
 **2. Detecting deposits cannot come from Trust Wallet.**
 
@@ -263,6 +269,33 @@ in the chat shows the menu.
 | `/scan [chain]` | Force a scan instead of waiting for the timer |
 | `/ipn` | Callback queue health and recent failures |
 | `/users [n]` | Recently created users |
+| `/key [address]` | Reveal a private key, after a confirmation |
+| `/withdraw [CUR]` | Send funds out — asks destination and amount |
+| `/cancel` | Stop a command that is waiting on an answer |
+
+### Recovering funds from a deposit address
+
+Deposits land on per-user addresses at derivation index 1 and above. **The
+Trust Wallet app only displays index 0**, so those balances are invisible in the
+app even though the seed controls them. Two ways to reach them:
+
+`/key` exports the private key for one address, in the format that address's
+wallet expects — WIF for BTC/LTC/DOGE/DASH/BCH/ZEC, hex for ETH/BSC/TRON, base58
+for Solana. Import it with **Import Wallet → Private Key** and the funds appear.
+The bot asks for confirmation first and deletes the message after 90 seconds.
+
+`/withdraw` moves funds without exposing a key: pick a currency, give a
+destination, then an amount or a percentage (`100%`, `50%`, `0.01`). It shows
+what will be sent and needs an explicit `YES` before broadcasting.
+
+Sending is implemented for **BTC, LTC, DOGE, DASH, BCH, ZEC, ETH, BNB and the
+ERC-20/BEP-20 tokens** — signed with Trust Wallet Core and broadcast directly.
+The other chains need their own transaction construction and are not built yet;
+`/withdraw` says so and points you at `/key` instead.
+
+A token sweep needs gas on the address it spends from. Moving USDT out of a
+deposit address means sending a little ETH or BNB there first — `/withdraw`
+tells you when that is the blocker rather than failing obscurely.
 
 ### Deposit alerts
 

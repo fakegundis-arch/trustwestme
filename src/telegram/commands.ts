@@ -12,7 +12,8 @@ export interface Command {
   name: string;
   args?: string;
   description: string;
-  run: (args: string[]) => Promise<string>;
+  /** `chatId` is passed so multi-step commands can track their conversation. */
+  run: (args: string[], chatId: number) => Promise<string>;
 }
 
 const b = (s: unknown) => `<b>${esc(s)}</b>`;
@@ -346,6 +347,35 @@ export function buildCommands(): Command[] {
           }
         }
         return lines.join('\n');
+      },
+    },
+
+    {
+      name: 'key',
+      args: '[address|chain index]',
+      description: 'Reveal a private key (asks for confirmation first)',
+      run: async (args, chatId) => {
+        const { beginKey } = await import('./conversation');
+        return beginKey(chatId, args);
+      },
+    },
+
+    {
+      name: 'withdraw',
+      args: '[CURRENCY]',
+      description: 'Send funds out — asks for destination and amount',
+      run: async (args, chatId) => {
+        const { beginWithdraw } = await import('./conversation');
+        return beginWithdraw(chatId, args);
+      },
+    },
+
+    {
+      name: 'cancel',
+      description: 'Stop whatever command is waiting on an answer',
+      run: async (_args, chatId) => {
+        const { cancelFlow } = await import('./conversation');
+        return cancelFlow(chatId) ? 'Cancelled.' : 'Nothing in progress.';
       },
     },
 

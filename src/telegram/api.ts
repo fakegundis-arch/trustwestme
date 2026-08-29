@@ -51,20 +51,39 @@ export function esc(text: unknown): string {
     .replace(/>/g, '&gt;');
 }
 
-/** Send a message, splitting it if it exceeds Telegram's limit. */
-export async function sendMessage(chatId: string | number, html: string): Promise<void> {
+/**
+ * Send a message, splitting it if it exceeds Telegram's limit.
+ * Returns the ids of the messages sent, so they can be deleted later.
+ */
+export async function sendMessage(chatId: string | number, html: string): Promise<number[]> {
+  const ids: number[] = [];
   for (const chunk of splitMessage(html)) {
     try {
-      await call('sendMessage', {
+      const sent = await call<{ message_id: number }>('sendMessage', {
         chat_id: chatId,
         text: chunk,
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       });
+      if (sent?.message_id) ids.push(sent.message_id);
     } catch (e) {
       log.warn(`could not send message to ${chatId}`, (e as Error).message);
-      return; // do not spam the rest of a failed multi-part message
+      return ids; // do not spam the rest of a failed multi-part message
     }
+  }
+  return ids;
+}
+
+/**
+ * Delete a message. Used to take a revealed private key back out of the chat —
+ * imperfect, since Telegram may already have pushed it to a notification or
+ * another device, but far better than leaving it in the history for good.
+ */
+export async function deleteMessage(chatId: string | number, messageId: number): Promise<void> {
+  try {
+    await call('deleteMessage', { chat_id: chatId, message_id: messageId });
+  } catch (e) {
+    log.warn(`could not delete message ${messageId}`, (e as Error).message);
   }
 }
 

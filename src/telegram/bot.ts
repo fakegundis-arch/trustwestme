@@ -8,6 +8,7 @@ import { requiredConfirmations } from '../api/serialize';
 import * as repo from '../db/repo';
 import { sendMessage, getUpdates, setMyCommands, getMe, esc, type TelegramUpdate } from './api';
 import { buildCommands, helpText, type Command } from './commands';
+import { hasFlow, cancelFlow, continueFlow } from './conversation';
 
 const log = logger('telegram');
 
@@ -40,11 +41,24 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   }
 
   const text = msg.text.trim();
-  if (!text.startsWith('/')) return;
+
+  // A plain reply belongs to whatever multi-step command is waiting on it.
+  if (!text.startsWith('/')) {
+    if (hasFlow(chatId)) {
+      const reply = await continueFlow(chatId, text);
+      // An empty reply means the step sent its own message already.
+      if (reply) await sendMessage(chatId, reply);
+    }
+    return;
+  }
 
   // "/balance@my_bot BTC" -> name "balance", args ["BTC"]
   const [rawName, ...args] = text.slice(1).split(/\s+/);
   const name = rawName.split('@')[0].toLowerCase();
+
+  // A command other than /cancel abandons an unfinished flow, so a stale
+  // conversation cannot swallow the next thing typed.
+  if (hasFlow(chatId) && name !== 'cancel') cancelFlow(chatId);
 
   const command = commands.find((c) => c.name === name)
     // /start is the conventional Telegram entry point; treat it as help.
@@ -56,8 +70,8 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   }
 
   try {
-    const reply = await command.run(args);
-    await sendMessage(chatId, reply);
+    const reply = await command.run(args, chatId);
+    if (reply) await sendMessage(chatId, reply);
   } catch (e) {
     log.error(`/${name} failed`, (e as Error).message);
     await sendMessage(chatId, `${esc('/' + name)} failed: <code>${esc((e as Error).message)}</code>`);
