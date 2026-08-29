@@ -27,11 +27,21 @@ export function createServer() {
   app.use((_req, res, next) => {
     const sendJson = res.json.bind(res);
     res.json = (body: unknown) => {
-      if (body && typeof body === 'object' && !Array.isArray(body)
-        && (body as Record<string, unknown>).error === undefined) {
-        return sendJson({ error: 'ok', ...(body as Record<string, unknown>) });
-      }
-      return sendJson(body);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return sendJson(body);
+      const payload = body as Record<string, unknown>;
+      const succeeded = res.statusCode < 400;
+      const extras: Record<string, unknown> = {};
+
+      if (payload.error === undefined) extras.error = succeeded ? 'ok' : 'error';
+
+      // Some callers read a top-level `status` instead. Only ever added when
+      // the body has none of its own: a transaction carries `status:
+      // "completed"`, and overwriting that with "ok" would tell the caller a
+      // settled deposit had not settled. Never added to an error response.
+      if (succeeded && payload.status === undefined) extras.status = 'ok';
+
+      // Spread the body last so nothing here can shadow a real field.
+      return sendJson({ ...extras, ...payload });
     };
     next();
   });

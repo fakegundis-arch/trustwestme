@@ -148,12 +148,53 @@ test('a transaction can be fetched by its numeric id', async () => {
 
 test('the transactions list is offered under several keys', async () => {
   const { body } = await get('/wallet/transactions');
-  // The endpoint is absent from the published SDKs, so which key the caller
-  // reads is unknown; all of them carry the same array.
+  // `transactions` at the root is the one the yukitale exchange reads; the
+  // others cover clients that wrap the list differently.
   assert.ok(Array.isArray(body.transactions));
   assert.ok(Array.isArray(body.result));
+  assert.ok(Array.isArray(body.data?.transactions));
   assert.equal(body.transactions.length, body.result.length);
+  assert.equal(body.transactions.length, body.data.transactions.length);
   assert.equal(typeof body.count, 'number');
+});
+
+test('a top-level status:"ok" is added where there is none', async () => {
+  const { body } = await post('/address/generate', { currency: 'BTC', label: 'status-1' });
+  assert.equal(body.status, 'ok');
+  assert.equal(body.error, 'ok');
+});
+
+test("a transaction's own status is never overwritten with ok", async () => {
+  // The injected top-level status must not clobber a real one. If it did, a
+  // settled deposit would report "ok" instead of "completed" and the caller
+  // would never credit it.
+  const list = await get('/wallet/transactions');
+  const tx = list.body.transactions[0];
+  assert.ok(['pending', 'completed', 'created', 'error', 'orphaned'].includes(tx.status),
+    `transaction status was clobbered: ${tx.status}`);
+
+  const single = await post('/wallet/transaction', { id: tx.id });
+  assert.equal(single.body.status, tx.status);
+  assert.notEqual(single.body.status, 'ok', 'the transaction status was replaced by the wrapper');
+});
+
+test('an error response does not claim status:"ok"', async () => {
+  const { status, body } = await post('/address/generate', { currency: 'NOTACOIN' });
+  assert.equal(status, 400);
+  assert.notEqual(body.status, 'ok', 'a failure must not report status "ok"');
+  assert.notEqual(body.error, 'ok');
+});
+
+test('the fields the exchange reads are all present on a transaction', async () => {
+  const { body } = await get('/wallet/transactions');
+  const tx = body.transactions[0];
+  // Read out of each transaction by WestWalletService.
+  for (const field of ['address', 'amount', 'currency', 'status', 'blockchain_hash', 'dest_tag']) {
+    assert.ok(field in tx, `transaction is missing ${field}`);
+  }
+  // status is compared against the literal "completed", so that spelling matters.
+  const settled = body.transactions.filter((t: any) => t.status === 'completed');
+  assert.ok(settled.length > 0, 'expected at least one completed transaction in the fixture');
 });
 
 test('deposit and withdrawal types match the SDK vocabulary', async () => {

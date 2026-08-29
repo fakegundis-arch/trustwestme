@@ -130,11 +130,18 @@ routes.get('/wallet/transactions', h(async (req, res) => {
   if (type !== 'deposit' && !userId) {
     result.push(...repo.listWithdrawals({ currency, status, limit, offset }).map(withdrawalToJson));
   }
-  // The list is offered under several keys because this endpoint is not in the
-  // published SDKs, so the key a given client reads is not knowable in advance.
-  // Spring Boot ignores unknown JSON properties by default, so the extras are
-  // harmless to a Java caller and let one response satisfy any of them.
-  res.json({ transactions: result, result, transactions_count: result.length, count: result.length });
+  // `transactions` at the root is what the yukitale exchange reads — its
+  // WestWalletService parses the body into a map and pulls that key out. The
+  // others cover clients that wrap the list differently; this endpoint is
+  // absent from the published SDKs, and Spring Boot ignores unknown JSON
+  // properties, so the duplicates cost nothing and remove a guess.
+  res.json({
+    transactions: result,
+    result,
+    data: { transactions: result },
+    count: result.length,
+    transactions_count: result.length,
+  });
 }));
 
 // /wallet/transaction?id=<uid>
