@@ -114,6 +114,12 @@ RestrictSUIDSGID=true
 WantedBy=multi-user.target
 ```
 
+> **If your app lives under `/home` rather than `/opt`**, `ProtectHome=true`
+> hides the whole of `/home` from the service and it will fail to start. Either
+> move the app to `/opt/gateway/app`, or set `ProtectHome=false` and point
+> `ReadWritePaths` at your actual data directory, e.g.
+> `/home/gateway/app/data`.
+
 ```bash
 systemctl daemon-reload
 systemctl enable --now gateway
