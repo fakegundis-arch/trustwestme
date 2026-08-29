@@ -6,6 +6,7 @@ import { logger } from '../util/log';
 import * as repo from '../db/repo';
 import { requiredConfirmations } from '../api/serialize';
 import { queueDepositIpn } from '../ipn';
+import { sharedAddressFor } from '../wallet/derive';
 import { events } from '../events';
 import type { ChainProvider, RawDeposit } from './types';
 
@@ -20,6 +21,9 @@ import { tezosProvider } from './providers/tezos';
 import { moneroProvider } from './providers/monero';
 
 const log = logger('watcher');
+
+/** Chains already reported as unconfigured, so the notice is not repeated. */
+const unconfiguredWarned = new Set<string>();
 
 export function buildProviders(): ChainProvider[] {
   const all: ChainProvider[] = [
@@ -49,6 +53,21 @@ export async function scanChain(provider: ChainProvider): Promise<{ seen: number
   // before a user exists; per-user chains have nothing to look at until then.
   if (watched.length === 0 && chain.addressMode !== 'shared') {
     return { seen: 0, credited: 0 };
+  }
+
+  // A tag/memo chain whose gateway account has not been set up yet is simply
+  // not in use. Say so once rather than failing on every pass forever.
+  if (chain.addressMode === 'shared') {
+    try {
+      sharedAddressFor(chain.id);
+    } catch {
+      if (!unconfiguredWarned.has(chain.id)) {
+        unconfiguredWarned.add(chain.id);
+        log.info(`${provider.chain}: no gateway account configured, skipping. `
+          + `Set it up with "npm run addresses -- --shared" when you want to accept it.`);
+      }
+      return { seen: 0, credited: 0 };
+    }
   }
 
   const cursor = repo.getCursor(provider.chain);

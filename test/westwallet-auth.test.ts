@@ -167,3 +167,49 @@ test('a request with no auth headers at all is refused', async () => {
   const body = await res.json() as any;
   assert.match(body.message, /X-ACCESS-SIGN/);
 });
+
+test('accepts the exact request the yukitale exchange sends', async () => {
+  // Captured from a live Apache-HttpClient/4.5.14 (Java/17) request:
+  //   POST /address/generate  {"currency":"BTC","label":"","ipn_url":""}
+  // An empty label must be treated as absent, not as a user called "".
+  const dumped = '{"currency":"BTC","label":"","ipn_url":""}';
+  const ts = Math.floor(Date.now() / 1000);
+  const res = await fetch(base + '/address/generate', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': 'Apache-HttpClient/4.5.14 (Java/17.0.20)',
+      'X-API-KEY': PUB,
+      'X-ACCESS-TIMESTAMP': String(ts),
+      'X-ACCESS-SIGN': sign(ts, dumped),
+    },
+    body: dumped,
+  });
+  assert.equal(res.status, 200, `the exchange's own request was rejected (${res.status})`);
+  const body = await res.json() as any;
+  assert.equal(body.error, 'ok');
+  assert.match(body.address, /^bc1/);
+});
+
+test('understands type "receive" as deposits', async () => {
+  // The exchange polls with {"limit":30,"type":"receive","order":"desc"}.
+  const dumped = '{"limit":30,"type":"receive","order":"desc"}';
+  const ts = Math.floor(Date.now() / 1000);
+  const res = await fetch(base + '/wallet/transactions', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'X-API-KEY': PUB,
+      'X-ACCESS-TIMESTAMP': String(ts),
+      'X-ACCESS-SIGN': sign(ts, dumped),
+    },
+    body: dumped,
+  });
+  assert.equal(res.status, 200, `the exchange's poll was rejected (${res.status})`);
+  const body = await res.json() as any;
+  assert.ok(Array.isArray(body.transactions));
+  // "receive" means deposits only — no withdrawals should come back.
+  for (const tx of body.transactions) {
+    assert.equal(tx.type, 'deposit', 'a withdrawal leaked into a "receive" query');
+  }
+});

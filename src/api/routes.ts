@@ -105,9 +105,12 @@ routes.get('/wallet/balances', h(async (_req, res) => {
 }));
 
 // ---------------------------------------------------------------------------
-// GET /wallet/transactions?currency=&status=&label=&limit=&offset=
+// /wallet/transactions — currency, status, label, type, limit, offset
+//
+// Served on POST as well as GET: the yukitale exchange polls this with a POST
+// body of {"limit":30,"type":"receive","order":"desc"}.
 // ---------------------------------------------------------------------------
-routes.get('/wallet/transactions', h(async (req, res) => {
+const transactionsHandler = h(async (req: Request, res: Response) => {
   const currencyRaw = param(req, 'currency');
   const currency = currencyRaw ? requireCurrency(currencyRaw).ticker : undefined;
   const label = param(req, 'label') ?? param(req, 'user_id');
@@ -122,7 +125,13 @@ routes.get('/wallet/transactions', h(async (req, res) => {
     userId = user.id;
   }
 
-  const type = param(req, 'type');
+  // WestWallet's vocabulary for direction: "receive" is a deposit, "send" a
+  // withdrawal. Both spellings are accepted.
+  const rawType = param(req, 'type');
+  const type = rawType === 'receive' ? 'deposit'
+    : rawType === 'send' ? 'withdrawal'
+    : rawType;
+
   const result: unknown[] = [];
   if (type !== 'withdrawal') {
     result.push(...repo.listDeposits({ userId, currency, status, limit, offset }).map(depositToJson));
@@ -142,7 +151,9 @@ routes.get('/wallet/transactions', h(async (req, res) => {
     count: result.length,
     transactions_count: result.length,
   });
-}));
+});
+routes.get('/wallet/transactions', transactionsHandler);
+routes.post('/wallet/transactions', transactionsHandler);
 
 // /wallet/transaction?id=<uid>
 // The WestWallet SDKs POST to this; GET is accepted too.

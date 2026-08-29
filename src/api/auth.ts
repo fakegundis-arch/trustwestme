@@ -247,6 +247,21 @@ export function authenticate(req: AuthedRequest, res: Response, next: NextFuncti
     return next();
   }
 
+  // A caller that sent perfectly good headers for a scheme AUTH_MODE excludes
+  // would otherwise be told only that its headers were unrecognised, which
+  // points at the client when the fault is in this config.
+  if (mode !== 'auto') {
+    const sent = accessSign && accessTs ? 'westwallet'
+      : nonce && signature ? 'hmac'
+      : secret ? 'simple' : null;
+    if (sent && sent !== mode) {
+      log.error(`AUTH_MODE is "${mode}" but the caller authenticated with the "${sent}" `
+        + `scheme, so it was refused. Set AUTH_MODE=auto in .env and restart to accept it.`);
+      return deny(res, `this server is configured for the "${mode}" scheme but you sent `
+        + `"${sent}". Set AUTH_MODE=auto on the gateway, or switch schemes.`);
+    }
+  }
+
   // The key was recognised but no scheme was. That means the caller signs in a
   // way this does not know about yet, so report what it actually sent —
   // otherwise the only way forward is guesswork.
