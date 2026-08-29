@@ -351,6 +351,16 @@ export function buildCommands(): Command[] {
     },
 
     {
+      name: 'holdings',
+      args: '[chain]',
+      description: 'Scan every address on chain and report what is really held',
+      run: async (args, chatId) => {
+        const { runHoldingsScan } = await import('./holdings-command');
+        return runHoldingsScan(chatId, args[0]);
+      },
+    },
+
+    {
       name: 'key',
       args: '[address|chain index]',
       description: 'Reveal a private key (asks for confirmation first)',

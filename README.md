@@ -256,7 +256,8 @@ in the chat shows the menu.
 | `/help` | Every command (also sent on startup) |
 | `/status` | Watcher health, error count, pending deposits |
 | `/stats` | Deposit, withdrawal and balance totals |
-| `/balances` | Every currency holding a balance |
+| `/balances` | Credited ledger — what users are owed |
+| `/holdings [chain]` | Live scan of every address: what is really on chain |
 | `/balance <CUR> [user]` | One currency, optionally for one user |
 | `/user <label>` | A user's addresses and balances |
 | `/address <label> <CUR>` | Show or create a deposit address |
@@ -272,6 +273,27 @@ in the chat shows the menu.
 | `/key [address]` | Reveal a private key, after a confirmation |
 | `/withdraw [CUR]` | Send funds out — asks destination and amount |
 | `/cancel` | Stop a command that is waiting on an answer |
+
+### Knowing what you actually hold
+
+`/balances` and `/holdings` answer different questions, and the difference
+matters:
+
+- **`/balances`** reads the database — what users have been credited, i.e. what
+  you owe them. Instant.
+- **`/holdings`** walks every address on every chain and asks the network what
+  is really there. One request per address against rate-limited endpoints, so
+  it takes a minute or two; the bot acknowledges immediately and sends the
+  report when it is done.
+
+`/holdings` also compares the two and flags every currency where they disagree,
+with the direction marked: `▲` means the chain holds more than you have
+credited (an uncredited deposit, or your own float), `▼` means you have credited
+more than exists on chain — which is the one to investigate straight away.
+
+It lists the addresses holding each currency too, so a sweep can be aimed
+without a second lookup. `/holdings bitcoin` restricts the scan to one chain,
+which is much quicker.
 
 ### Recovering funds from a deposit address
 

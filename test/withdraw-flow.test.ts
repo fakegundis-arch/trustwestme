@@ -206,3 +206,24 @@ test('an unrelated plain message is ignored when nothing is pending', async () =
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(sent.length, before, 'the bot replied to an unrelated message');
 });
+
+test('/holdings acknowledges immediately, then reports', async () => {
+  // The scan can outlast Telegram's patience for a single reply, so it must
+  // answer at once and send the report as a second message.
+  const before = sent.length;
+  await say('/holdings');
+  assert.match(sent[before].text, /Scanning live balances/);
+
+  // The report follows. Nothing is reachable in this test, so it comes back
+  // with failures rather than balances — but it must still arrive.
+  for (let i = 0; i < 200 && sent.length < before + 2; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.ok(sent.length >= before + 2, 'the report never followed the acknowledgement');
+  assert.match(sent[sent.length - 1].text, /Live holdings|Scan failed/);
+});
+
+test('/holdings rejects an unknown chain', async () => {
+  const reply = await say('/holdings notachain');
+  assert.match(reply, /Unknown chain/);
+});
