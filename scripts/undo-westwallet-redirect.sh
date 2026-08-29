@@ -50,7 +50,14 @@ if [ -n "$JAVA_BIN" ]; then
   fi
 fi
 
-# 4. The certificates themselves are harmless; keep them unless asked.
+# 4. Drop the CA from the system trust store.
+if [ -f /usr/local/share/ca-certificates/trustwestme-local.crt ]; then
+  rm -f /usr/local/share/ca-certificates/trustwestme-local.crt
+  update-ca-certificates --fresh >/dev/null 2>&1 || true
+  green "removed the CA from the system trust store"
+fi
+
+# 5. The certificates themselves are harmless; keep them unless asked.
 if [ "${1:-}" = "--purge" ]; then
   rm -rf "$TLS_DIR"
   green "deleted $TLS_DIR"

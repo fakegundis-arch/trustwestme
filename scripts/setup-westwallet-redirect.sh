@@ -98,6 +98,16 @@ else
   fi
 fi
 
+# Also trust the CA system-wide. The JVM import above is what actually matters,
+# but without this `curl https://api.westwallet.io/health` fails on an unknown
+# issuer — which looks like a broken setup when nothing is wrong.
+if [ -d /usr/local/share/ca-certificates ] && command -v update-ca-certificates >/dev/null; then
+  cp "$TLS_DIR/ca.crt" /usr/local/share/ca-certificates/trustwestme-local.crt
+  if update-ca-certificates >/dev/null 2>&1; then
+    green "    CA also added to the system trust store (so curl can verify it)"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 step "4/5  Pointing ${HOSTNAME_TO_HIJACK} at this machine"
 if grep -qE "^[^#]*\s${HOSTNAME_TO_HIJACK}(\s|$)" /etc/hosts; then
