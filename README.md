@@ -270,6 +270,7 @@ in the chat shows the menu.
 | `/scan [chain]` | Force a scan instead of waiting for the timer |
 | `/ipn` | Callback queue health and recent failures |
 | `/users [n]` | Recently created users |
+| `/logs [n] [errors]` | Recent log lines, optionally errors only |
 | `/key [address]` | Reveal a private key, after a confirmation |
 | `/withdraw [CUR]` | Send funds out — asks destination and amount |
 | `/cancel` | Stop a command that is waiting on an answer |

@@ -351,6 +351,35 @@ export function buildCommands(): Command[] {
     },
 
     {
+      name: 'logs',
+      args: '[count] [errors]',
+      description: 'Recent log lines from the log file',
+      run: async (args) => {
+        const { readLogTail, logFilePath } = await import('../util/log');
+        const file = logFilePath();
+        if (!file) {
+          return `File logging is off. Set ${code('LOG_FILE')} in .env to enable it.`;
+        }
+
+        const count = Math.min(Number(args.find((a) => /^\d+$/.test(a))) || 25, 60);
+        const onlyErrors = args.some((a) => /^(error|errors|err|warn)$/i.test(a));
+        const lines = readLogTail(count, onlyErrors ? /\b(ERROR|WARN)\b/ : undefined);
+
+        if (lines.length === 0) {
+          return onlyErrors
+            ? 'No errors or warnings in the recent log.'
+            : `Nothing in the log yet.\n\nFile: ${code(file)}`;
+        }
+        return [
+          b(`Last ${lines.length} lines${onlyErrors ? ' (errors and warnings)' : ''}`),
+          '',
+          // <pre> keeps the alignment readable on a phone.
+          `<pre>${esc(lines.join('\n'))}</pre>`,
+        ].join('\n');
+      },
+    },
+
+    {
       name: 'holdings',
       args: '[chain]',
       description: 'Scan every address on chain and report what is really held',

@@ -91,6 +91,41 @@ exchange values (BTC 2, ETH 12, BSC 15, TRX 20, DOGE 20). Raising them costs
 your users time; lowering them costs you money when a chain reorganises. Do not
 lower them for high-value assets.
 
+## Logs
+
+Everything is written twice: to the console, which systemd captures into its
+journal, and to a file at `data/gateway.log`.
+
+```bash
+tail -f /opt/gateway/app/data/gateway.log       # follow, no root needed
+grep ERROR /opt/gateway/app/data/gateway.log    # just the failures
+journalctl -u gateway -f                         # the same output via systemd
+```
+
+The file rotates at 10 MB, keeping five older copies (`gateway.log.1` and so
+on), so it cannot fill the disk. `LOG_FILE`, `LOG_MAX_BYTES` and `LOG_KEEP`
+control it; an empty `LOG_FILE` turns the file off and leaves the journal.
+
+`/logs` in the Telegram bot shows the last lines from the same file, and
+`/logs errors` filters to warnings and errors — useful for checking on the
+gateway from a phone.
+
+Two reasons the file exists alongside the journal. The journal is volatile
+unless `/var/log/journal` exists — without that directory it lives in RAM and
+every reboot wipes your history:
+
+```bash
+ls -d /var/log/journal || (mkdir -p /var/log/journal && systemctl restart systemd-journald)
+```
+
+And the file needs no root and no systemd, so it is there when the gateway is
+run by hand, in a container, or anywhere the journal is not.
+
+Writing the log is never allowed to interrupt the gateway. If the file cannot
+be written the logger says so once, disables itself and carries on to the
+console — losing a log line is acceptable, refusing to credit a deposit
+because of one is not.
+
 ## Monitoring
 
 `GET /status` reports each chain's cursor, last run time and last error. Alert on:
