@@ -55,7 +55,7 @@ export function evmProvider(chain: string, urlSetting: string): ChainProvider {
         from = oldest;
       }
 
-      if (from > latest) return { deposits: [], cursor: String(latest) };
+      if (from > latest) return { deposits: [], cursor: String(latest), chainHead: latest };
       const to = Math.min(latest, from + MAX_RANGE - 1);
 
       const byAddress = new Map<string, string>(); // lowercase -> stored form
@@ -152,7 +152,7 @@ export function evmProvider(chain: string, urlSetting: string): ChainProvider {
         }
       }
 
-      return { deposits, cursor: String(to) };
+      return { deposits, cursor: String(to), chainHead: latest };
     },
   };
 }

@@ -68,7 +68,7 @@ async function say(text: string, chatId = ADMIN): Promise<string> {
       from: { id: Number(chatId), username: 'tester' },
     },
   });
-  for (let i = 0; i < 160; i++) {
+  for (let i = 0; i < 400; i++) {
     if (sent.length > before) return sent[sent.length - 1].text;
     await new Promise((r) => setTimeout(r, 25));
   }
@@ -85,6 +85,13 @@ before(async () => {
   process.env.TELEGRAM_API_URL = `http://127.0.0.1:${port}`;
   process.env.TELEGRAM_CHAT_ID = ADMIN;
   process.env.TELEGRAM_ANNOUNCE_ON_START = 'false';
+  // Point the chain lookups at a dead port so a balance check fails at once.
+  // Left at the public defaults they wait on real network timeouts, the
+  // Blockchair fallback and its deliberate pacing, which makes this test slow
+  // and dependent on the outside world.
+  process.env.BTC_BLOCKBOOK_URL = 'http://127.0.0.1:1';
+  process.env.BLOCKCHAIR_API_URL = 'http://127.0.0.1:1';
+  process.env.BLOCKCHAIR_RPS = '100';
 
   repo = await import('../src/db/repo');
   const { getDepositIdentity } = await import('../src/services/addresses');

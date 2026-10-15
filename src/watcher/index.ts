@@ -103,8 +103,61 @@ export async function scanChain(provider: ChainProvider): Promise<{ seen: number
     }
   }
 
+  // A cursor-based provider never revisits a block, so a deposit first seen
+  // below its confirmation threshold would stay pending for good. Confirmations
+  // are head minus block height, so they can be brought up to date from the
+  // head alone, with no further requests.
+  if (result.chainHead) {
+    credited += advancePending(provider.chain, result.chainHead);
+  }
+
   repo.setCursor(provider.chain, result.cursor, null);
   return { seen: result.deposits.length, credited };
+}
+
+/**
+ * Re-evaluate deposits already recorded as pending against the current chain
+ * height, and credit the ones that have since confirmed.
+ */
+function advancePending(chainId: string, chainHead: number): number {
+  let credited = 0;
+
+  for (const deposit of repo.pendingDeposits(chainId)) {
+    if (!deposit.block_height) continue; // still unconfirmed in the mempool
+    const confirmations = Math.max(0, chainHead - deposit.block_height + 1);
+    const needed = requiredConfirmations(deposit.currency);
+    if (confirmations <= deposit.confirmations && confirmations < needed) continue;
+
+    const addressRow = repo.getAddress(deposit.user_id, chainId);
+    const { row, becameCompleted } = repo.recordDeposit({
+      userId: deposit.user_id,
+      addressId: deposit.address_id,
+      chain: chainId,
+      currency: deposit.currency,
+      address: deposit.address,
+      tag: deposit.tag,
+      txid: deposit.txid,
+      outputIndex: deposit.output_index,
+      amountUnits: BigInt(deposit.amount_units),
+      confirmations,
+      blockHeight: deposit.block_height,
+      status: confirmations >= needed ? 'completed' : 'pending',
+    });
+
+    if (becameCompleted && repo.creditDeposit(row.id)) {
+      const currency = CURRENCIES[row.currency];
+      const user = repo.getUserById(row.user_id);
+      const amount = fromBaseUnits(BigInt(row.amount_units), currency?.decimals ?? 8);
+      log.info(`${chainId}: credited ${amount} ${row.currency} to ${user?.external_id} `
+        + `(confirmed at height ${chainHead})`);
+      const completed = { ...row, status: 'completed', credited: 1 };
+      queueDepositIpn(completed, addressRow?.ipn_url ?? null);
+      events.emitEvent('deposit.completed', completed);
+      credited++;
+    }
+  }
+
+  return credited;
 }
 
 /** Attribute, persist, and (when confirmed) credit a single observed deposit. */

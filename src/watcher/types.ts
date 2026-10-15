@@ -24,6 +24,16 @@ export interface ScanResult {
   deposits: RawDeposit[];
   /** New cursor to persist. Return the incoming cursor to leave it unchanged. */
   cursor: string | null;
+  /**
+   * Current chain height, when the provider knows it.
+   *
+   * Cursor-based providers never look at a block twice, so a deposit first seen
+   * below its confirmation threshold would never be revisited and would stay
+   * pending forever. Reporting the head lets the watcher recompute
+   * confirmations for deposits it already knows about, which needs no extra
+   * requests: confirmations are just head minus the deposit's block height.
+   */
+  chainHead?: number;
 }
 
 export interface ChainProvider {

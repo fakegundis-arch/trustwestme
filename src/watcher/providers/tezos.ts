@@ -63,7 +63,7 @@ export function tezosProvider(): ChainProvider {
         });
       }
 
-      return { deposits, cursor };
+      return { deposits, cursor, chainHead: head || undefined };
     },
   };
 }
