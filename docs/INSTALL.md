@@ -130,7 +130,7 @@ the error.
 
 
 
-Run this command first- 
+# Run this command first- 
 ---bash
 
 # 1. Let the gateway user read the certificate (the CA key stays root-only)
