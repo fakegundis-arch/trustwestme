@@ -17,6 +17,10 @@ HOSTNAME_TO_HIJACK="api.westwallet.io"
 GATEWAY_PORT="${1:-8787}"
 TLS_DIR="/etc/gateway-tls"
 NGINX_CONF="/etc/nginx/conf.d/westwallet-gateway.conf"
+TLS_UNIT="/etc/systemd/system/gateway-tls.service"
+# Where the gateway is installed. The TLS proxy runs from here, as the account
+# that owns it, so both are derived rather than assumed.
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
@@ -163,12 +167,69 @@ elif [ -n "$PORT_443_OWNER" ]; then
   red "    http://127.0.0.1:${GATEWAY_PORT}. Certificate: $TLS_DIR/server.crt"
   exit 1
 else
-  green "    port 443 is free — use the built-in TLS proxy:"
-  echo
-  echo "      TLS_TARGET_PORT=${GATEWAY_PORT} npm run tls-proxy"
-  echo
-  echo "    Run it under systemd so it survives a reboot; docs/REDIRECT-WESTWALLET.md"
-  echo "    has a unit file ready to copy."
+  # Port 443 is free, so nothing is serving the hostname we just redirected.
+  # Printing instructions here is not enough: /etc/hosts now sends the
+  # exchange's API calls to a port with nothing on it, so leaving this step to
+  # the reader turns a working integration into "connection refused".
+  green "    port 443 is free — installing the TLS proxy as a service"
+
+  # The certificate is created root-owned; the service account must read it.
+  # The CA's private key stays root-only: anything holding it can issue
+  # certificates this machine trusts.
+  SERVICE_USER="$(stat -c '%U' "$APP_DIR" 2>/dev/null || echo root)"
+  chmod 755 "$TLS_DIR"
+  chown "$SERVICE_USER:$SERVICE_USER" "$TLS_DIR/server.crt" "$TLS_DIR/server.key"
+  chmod 640 "$TLS_DIR/server.key"
+
+  cat > "$TLS_UNIT" <<EOF
+[Unit]
+Description=TLS front end for the payment gateway
+After=network-online.target gateway.service
+Wants=gateway.service
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${APP_DIR}
+Environment=TLS_CERT=${TLS_DIR}/server.crt
+Environment=TLS_KEY=${TLS_DIR}/server.key
+Environment=TLS_PROXY_PORT=443
+Environment=TLS_PROXY_HOST=127.0.0.1
+Environment=TLS_TARGET_PORT=${GATEWAY_PORT}
+ExecStart=$(command -v node) dist/cli/tls-proxy.js
+Restart=always
+RestartSec=10
+
+# Binding 443 normally needs root; this grants that one capability instead.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now gateway-tls >/dev/null 2>&1 || true
+
+  # Confirm it is really serving, rather than assuming the unit started.
+  for _ in $(seq 1 10); do
+    if curl -sS --noproxy '*' --cacert "$TLS_DIR/ca.crt" --max-time 3 \
+        "https://${HOSTNAME_TO_HIJACK}/health" 2>/dev/null | grep -q trustwestme; then
+      green "    TLS proxy is serving ${HOSTNAME_TO_HIJACK} on 443"
+      TLS_PROXY_OK=yes
+      break
+    fi
+    sleep 1
+  done
+
+  if [ -z "${TLS_PROXY_OK:-}" ]; then
+    red "    the TLS proxy did not come up. Diagnose with:"
+    red "      systemctl status gateway-tls --no-pager"
+    red "      journalctl -u gateway-tls -n 30 --no-pager"
+    red "    Until it does, the exchange's API calls will be refused, because"
+    red "    /etc/hosts now points ${HOSTNAME_TO_HIJACK} at this machine."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -182,6 +243,8 @@ Changed:
   * /etc/hosts            ${HOSTNAME_TO_HIJACK} -> 127.0.0.1 (backup taken)
   * ${NGINX_CONF}
                           (only if nginx is serving 443)
+  * ${TLS_UNIT}
+                          (only if port 443 was free)
 
 Next:
   1. Restart your exchange application so it picks up the new truststore.

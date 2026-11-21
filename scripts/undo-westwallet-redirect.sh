@@ -25,7 +25,19 @@ else
   yellow "no /etc/hosts entry to remove"
 fi
 
-# 2. Remove the nginx server block.
+# 2. Stop and remove the TLS proxy service, if the setup installed one.
+#    Left running it would keep holding port 443 for a hostname that no longer
+#    resolves here, which is confusing rather than harmful.
+if [ -f /etc/systemd/system/gateway-tls.service ]; then
+  systemctl disable --now gateway-tls >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/gateway-tls.service
+  systemctl daemon-reload
+  green "stopped and removed the TLS proxy service"
+else
+  yellow "no TLS proxy service to remove"
+fi
+
+# 3. Remove the nginx server block.
 if [ -f "$NGINX_CONF" ]; then
   rm -f "$NGINX_CONF"
   if nginx -t 2>/dev/null; then
@@ -36,7 +48,7 @@ if [ -f "$NGINX_CONF" ]; then
   fi
 fi
 
-# 3. Drop the CA from the Java truststore.
+# 4. Drop the CA from the Java truststore.
 JAVA_BIN="$(command -v java || true)"
 if [ -n "$JAVA_BIN" ]; then
   JAVA_HOME_DIR="$(dirname "$(dirname "$(readlink -f "$JAVA_BIN")")")"
@@ -50,14 +62,14 @@ if [ -n "$JAVA_BIN" ]; then
   fi
 fi
 
-# 4. Drop the CA from the system trust store.
+# 5. Drop the CA from the system trust store.
 if [ -f /usr/local/share/ca-certificates/trustwestme-local.crt ]; then
   rm -f /usr/local/share/ca-certificates/trustwestme-local.crt
   update-ca-certificates --fresh >/dev/null 2>&1 || true
   green "removed the CA from the system trust store"
 fi
 
-# 5. The certificates themselves are harmless; keep them unless asked.
+# 6. The certificates themselves are harmless; keep them unless asked.
 if [ "${1:-}" = "--purge" ]; then
   rm -rf "$TLS_DIR"
   green "deleted $TLS_DIR"

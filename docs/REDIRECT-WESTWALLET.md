@@ -56,8 +56,22 @@ deleting that one line restores normal behaviour immediately.
 
 ## If port 443 is free
 
-The setup script tells you when nothing owns 443, and the built-in proxy handles
-it. Run it under systemd so it survives a reboot.
+The setup script installs and starts the TLS proxy as a `gateway-tls` service
+itself, and checks that the hostname really answers before it finishes. There is
+nothing to do by hand.
+
+It has to: `/etc/hosts` now sends the exchange's API calls to this machine, so
+if nothing is listening on 443 the calls are refused and the exchange reports an
+error — worse than before the redirect. If the script reports the proxy did not
+come up, fix that before anything else:
+
+```bash
+systemctl status gateway-tls --no-pager
+journalctl -u gateway-tls -n 30 --no-pager
+```
+
+The unit it writes is below, for reference or if you would rather do it
+yourself.
 
 The certificate is created root-owned, so first let the service account read it.
 The CA's private key stays readable only by root — that one must never be
