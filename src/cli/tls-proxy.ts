@@ -1,6 +1,7 @@
 import * as https from 'node:https';
 import * as http from 'node:http';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { logger } from '../util/log';
 
 const log = logger('tls-proxy');
@@ -27,9 +28,29 @@ const targetPort = Number(process.env.TLS_TARGET_PORT || 8787);
 const targetHost = process.env.TLS_TARGET_HOST || '127.0.0.1';
 
 function main() {
+  // Distinguish "absent" from "there but unreadable". Both used to print
+  // "not found", which sent diagnosis down the wrong path entirely: the usual
+  // cause is this process running as a service account that cannot traverse
+  // /etc/gateway-tls (root-only directory mode), with the files present and
+  // correctly owned the whole time. The remedy is the opposite of re-running
+  // setup, so the message has to say which case it is.
   for (const [label, file] of [['certificate', certPath], ['private key', keyPath]] as const) {
-    if (!fs.existsSync(file)) {
-      log.error(`${label} not found at ${file}. Run scripts/setup-westwallet-redirect.sh first.`);
+    try {
+      fs.accessSync(file, fs.constants.R_OK);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
+        log.error(`${label} not found at ${file}. Run scripts/setup-westwallet-redirect.sh first.`);
+      } else if (code === 'EACCES') {
+        log.error(
+          `${label} at ${file} exists but this process cannot read it `
+          + `(running as uid ${process.getuid?.() ?? '?'}). `
+          + 'Check the directory is traversable, not just the file readable: '
+          + `ls -ld ${path.dirname(file)}`,
+        );
+      } else {
+        log.error(`${label} at ${file} is unreadable: ${(e as Error).message}`);
+      }
       process.exit(1);
     }
   }

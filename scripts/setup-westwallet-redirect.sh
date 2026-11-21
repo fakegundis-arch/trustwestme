@@ -71,7 +71,26 @@ openssl x509 -req -in "$TLS_DIR/server.csr" \
   -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial \
   -out "$TLS_DIR/server.crt" -days 3650 -extfile "$TLS_DIR/san.cnf" 2>/dev/null
 chmod 600 "$TLS_DIR"/*.key
+
+# The TLS proxy runs as the account that owns the install, not as root, so it
+# has to be able to read the server certificate and key -- and to traverse the
+# directory holding them. The directory mode is the part that bites: with the
+# files chowned but the directory left at 700 root-only, the proxy cannot reach
+# files it owns, and an existence check cannot tell that apart from a missing
+# file, so it reports the certificate as absent while it sits right there.
+#
+# This runs on every invocation, directly after the certificate is issued.
+# Doing it only when installing a fresh service meant a re-run reset the mode
+# above and never restored it, breaking a setup that had been working.
+SERVICE_USER="$(stat -c '%U' "$APP_DIR" 2>/dev/null || echo root)"
+chmod 755 "$TLS_DIR"
+chown "$SERVICE_USER:$SERVICE_USER" "$TLS_DIR/server.crt" "$TLS_DIR/server.key"
+chmod 640 "$TLS_DIR/server.key"
+# The CA's signing key stays root-only. Anything holding it can issue
+# certificates this machine trusts, so it must not follow the server key.
+chmod 600 "$TLS_DIR/ca.key"
 green "    certificate issued for ${HOSTNAME_TO_HIJACK}"
+green "    readable by ${SERVICE_USER} (ca.key stays root-only)"
 
 # ---------------------------------------------------------------------------
 step "3/6  Trusting the CA in the Java truststore"
@@ -198,14 +217,6 @@ else
   # exchange's API calls to a port with nothing on it, so leaving this step to
   # the reader turns a working integration into "connection refused".
   green "    port 443 is free — installing the TLS proxy as a service"
-
-  # The certificate is created root-owned; the service account must read it.
-  # The CA's private key stays root-only: anything holding it can issue
-  # certificates this machine trusts.
-  SERVICE_USER="$(stat -c '%U' "$APP_DIR" 2>/dev/null || echo root)"
-  chmod 755 "$TLS_DIR"
-  chown "$SERVICE_USER:$SERVICE_USER" "$TLS_DIR/server.crt" "$TLS_DIR/server.key"
-  chmod 640 "$TLS_DIR/server.key"
 
   cat > "$TLS_UNIT" <<EOF
 [Unit]
