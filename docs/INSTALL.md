@@ -131,7 +131,7 @@ the error.
 
 
 # Run this command first- 
----bash
+```bash
 
 # 1. Let the gateway user read the certificate (the CA key stays root-only)
 chmod 755 /etc/gateway-tls
@@ -169,7 +169,7 @@ systemctl daemon-reload
 systemctl enable --now gateway-tls
 systemctl status gateway-tls --no-pager
 
----
+```
 
 
 ## Step 6 — Create the master seed phrase
