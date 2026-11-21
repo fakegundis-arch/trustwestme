@@ -29,9 +29,12 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 [ "$(id -u)" -eq 0 ] || { red "Run this as root (sudo bash $0)"; exit 1; }
 command -v openssl >/dev/null || { red "openssl is required: apt install -y openssl"; exit 1; }
+# Without ss, port ownership cannot be read and the script would guess wrong
+# about what is already serving 443.
+command -v ss >/dev/null || { red "ss is required: apt install -y iproute2"; exit 1; }
 
 # ---------------------------------------------------------------------------
-step "1/5  Checking the gateway is running on port ${GATEWAY_PORT}"
+step "1/6  Checking the gateway is running on port ${GATEWAY_PORT}"
 if curl -fsS --max-time 5 "http://127.0.0.1:${GATEWAY_PORT}/health" | grep -q trustwestme; then
   green "    gateway is up"
 else
@@ -41,7 +44,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "2/5  Creating a local CA and a certificate for ${HOSTNAME_TO_HIJACK}"
+step "2/6  Creating a local CA and a certificate for ${HOSTNAME_TO_HIJACK}"
 mkdir -p "$TLS_DIR"
 chmod 700 "$TLS_DIR"
 
@@ -71,7 +74,7 @@ chmod 600 "$TLS_DIR"/*.key
 green "    certificate issued for ${HOSTNAME_TO_HIJACK}"
 
 # ---------------------------------------------------------------------------
-step "3/5  Trusting the CA in the Java truststore"
+step "3/6  Trusting the CA in the Java truststore"
 JAVA_BIN="$(command -v java || true)"
 if [ -z "$JAVA_BIN" ]; then
   red "    java not found on PATH — import $TLS_DIR/ca.crt into your JVM manually"
@@ -113,7 +116,7 @@ if [ -d /usr/local/share/ca-certificates ] && command -v update-ca-certificates 
 fi
 
 # ---------------------------------------------------------------------------
-step "4/5  Pointing ${HOSTNAME_TO_HIJACK} at this machine"
+step "4/6  Pointing ${HOSTNAME_TO_HIJACK} at this machine"
 if grep -qE "^[^#]*\s${HOSTNAME_TO_HIJACK}(\s|$)" /etc/hosts; then
   yellow "    /etc/hosts already redirects it"
 else
@@ -124,10 +127,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "5/5  Serving ${HOSTNAME_TO_HIJACK} over TLS"
+step "5/6  Serving ${HOSTNAME_TO_HIJACK} over TLS"
 PORT_443_OWNER="$(ss -tlnp 2>/dev/null | awk '$4 ~ /:443$/ {print $NF; exit}')"
 
-if echo "$PORT_443_OWNER" | grep -qi nginx || (command -v nginx >/dev/null && [ -n "$PORT_443_OWNER" ]); then
+# Our own TLS proxy already serving 443 is the normal state on a re-run, and the
+# script must be safe to re-run: a partly-finished setup is exactly when it gets
+# run again. Recognise it rather than reporting it as a foreign process.
+if [ -n "$PORT_443_OWNER" ] && { systemctl is-active gateway-tls >/dev/null 2>&1 \
+    || echo "$PORT_443_OWNER" | grep -q 'node'; } \
+    && [ -f "$TLS_UNIT" ]; then
+  green "    the gateway's own TLS proxy already holds port 443"
+  systemctl restart gateway-tls >/dev/null 2>&1 || true
+  for _ in $(seq 1 10); do
+    if curl -sS --noproxy '*' --cacert "$TLS_DIR/ca.crt" --max-time 3 \
+        "https://${HOSTNAME_TO_HIJACK}/health" 2>/dev/null | grep -q trustwestme; then
+      green "    and it is serving ${HOSTNAME_TO_HIJACK} correctly"
+      TLS_PROXY_OK=yes
+      break
+    fi
+    sleep 1
+  done
+  if [ -z "${TLS_PROXY_OK:-}" ]; then
+    red "    but it is not answering for ${HOSTNAME_TO_HIJACK}. Diagnose with:"
+    red "      systemctl status gateway-tls --no-pager"
+    red "      journalctl -u gateway-tls -n 30 --no-pager"
+  fi
+
+elif echo "$PORT_443_OWNER" | grep -qi nginx || (command -v nginx >/dev/null && [ -n "$PORT_443_OWNER" ]); then
   green "    nginx already owns port 443 — adding a server block for it"
   cat > "$NGINX_CONF" <<EOF
 # Serves the hardcoded WestWallet hostname from the local gateway.
@@ -233,6 +259,58 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
+# Verify all three pieces before claiming success.
+#
+# The redirect only works if the hostname resolves here, Java trusts the
+# certificate, and something serves 443. Reporting "Done." with any of them
+# missing is worse than failing: the exchange then calls the real WestWallet,
+# is rejected, and shows nothing, while the gateway log stays empty because
+# nothing reached it. That is a genuinely hard failure to diagnose from either
+# end, so each piece is checked here by its effect, not by whether a command
+# earlier appeared to work.
+step "6/6  Verifying"
+VERIFY_FAILED=""
+
+if grep -qE "^[^#]*\s${HOSTNAME_TO_HIJACK}(\s|$)" /etc/hosts; then
+  green "    /etc/hosts sends ${HOSTNAME_TO_HIJACK} here"
+else
+  red "    /etc/hosts does NOT redirect ${HOSTNAME_TO_HIJACK}"
+  VERIFY_FAILED="yes"
+fi
+
+if [ -n "${KEYTOOL:-}" ] && "$KEYTOOL" -list -cacerts -storepass changeit \
+    -alias trustwestme-local >/dev/null 2>&1; then
+  green "    Java trusts the certificate"
+elif [ -n "${KEYTOOL:-}" ] && "$KEYTOOL" -list \
+    -keystore "${JAVA_HOME_DIR:-}/lib/security/cacerts" -storepass changeit \
+    -alias trustwestme-local >/dev/null 2>&1; then
+  green "    Java trusts the certificate (legacy truststore)"
+else
+  red "    Java does NOT trust the certificate — the exchange will refuse the"
+  red "    connection. Import it by hand:"
+  red "      ${KEYTOOL:-keytool} -importcert -trustcacerts -cacerts \\"
+  red "        -storepass changeit -alias trustwestme-local \\"
+  red "        -file $TLS_DIR/ca.crt -noprompt"
+  VERIFY_FAILED="yes"
+fi
+
+if curl -sS --noproxy '*' --cacert "$TLS_DIR/ca.crt" --max-time 5 \
+    "https://${HOSTNAME_TO_HIJACK}/health" 2>/dev/null | grep -q trustwestme; then
+  green "    https://${HOSTNAME_TO_HIJACK} reaches the gateway"
+else
+  red "    https://${HOSTNAME_TO_HIJACK} does NOT reach the gateway"
+  VERIFY_FAILED="yes"
+fi
+
+if [ -n "$VERIFY_FAILED" ]; then
+  echo
+  red "SETUP INCOMPLETE — the items marked above must be fixed."
+  red "Until they are, your exchange cannot reach the gateway and deposit"
+  red "addresses will not appear. Re-running this script is safe."
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 cat <<EOF
 
 $(green "Done.")
@@ -246,17 +324,17 @@ Changed:
   * ${TLS_UNIT}
                           (only if port 443 was free)
 
+All three pieces were verified above: the hostname resolves here, Java trusts
+the certificate, and the hostname reaches the gateway.
+
 Next:
   1. Restart your exchange application so it picks up the new truststore.
-  2. Verify from this machine:
-
-       curl -sS https://${HOSTNAME_TO_HIJACK}/health
-
-     That should print the gateway's JSON. A certificate error means the CA
-     import did not take; anything else means the gateway is not reachable.
-
-  3. Put your gateway's API keys into the exchange admin panel, where the
+     Nothing takes effect inside a JVM that was already running.
+  2. Put your gateway's API keys into the exchange admin panel, where the
      WestWallet keys used to go.
+  3. Click "show address" on your site, then confirm the request arrived:
+
+       grep address/generate ${APP_DIR}/data/gateway.log | tail -n 5
 
 To undo everything:  sudo bash scripts/undo-westwallet-redirect.sh
 

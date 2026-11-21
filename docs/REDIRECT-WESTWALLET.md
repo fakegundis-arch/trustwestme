@@ -28,21 +28,33 @@ The script refuses to proceed unless the gateway is already answering, then:
 1. creates a local CA and a certificate for `api.westwallet.io`
 2. imports that CA into the Java truststore (`keytool -importcert -cacerts`)
 3. adds `127.0.0.1 api.westwallet.io` to `/etc/hosts`, keeping a backup
-4. serves it on 443 — an nginx server block if nginx already owns the port,
-   otherwise the built-in TLS proxy
+4. serves it on 443 — an nginx server block if nginx already owns the port, its
+   own `gateway-tls` proxy if that is already there, otherwise a fresh one
+5. **verifies all three pieces** and exits non-zero if any is missing
 
-Then **restart your exchange application** so it reloads the truststore, and
-check from that machine:
+That last step matters more than it sounds. The redirect needs the hostname to
+resolve here, Java to trust the certificate, *and* something to serve 443. With
+any one missing the exchange calls the real WestWallet, gets rejected, and shows
+nothing — while the gateway's log stays empty, because no request ever arrived.
+That is painful to diagnose from either end, so the script now checks each piece
+by its effect and prints `SETUP INCOMPLETE` rather than `Done.`
+
+It is safe to re-run, which is the point: a half-finished setup is exactly when
+you run it again. A second run recognises its own proxy on 443 instead of
+mistaking it for a foreign process, and fills in whatever is missing.
+
+Then **restart your exchange application** so it reloads the truststore —
+nothing takes effect inside a JVM that was already running — and put your
+gateway's API keys into the admin panel where the WestWallet keys used to go.
+
+To confirm the exchange really reaches the gateway, click "show address" on the
+site and look for the request:
 
 ```bash
-curl -sS https://api.westwallet.io/health
+grep address/generate /opt/gateway/app/data/gateway.log | tail -n 5
 ```
 
-That should print the gateway's JSON. A certificate error means the CA import
-did not take; a connection error means the gateway is not reachable.
-
-Finally, put your gateway's API keys into the admin panel where the WestWallet
-keys used to go.
+No line there means the calls are still going somewhere else.
 
 ## Undoing it
 
