@@ -5,6 +5,14 @@ import { setupEnv } from './helpers';
 
 setupEnv('holdings');
 
+// These two are deliberately broken, and must be set before any src module is
+// imported: config reads the environment once, so an assignment inside a test
+// body arrives too late and the real public endpoint is used instead — which
+// made these cases pass or fail depending on what the network happened to
+// allow.
+process.env.EOS_ACCOUNT = '';                      // no gateway account
+process.env.SOLANA_RPC_URL = 'http://127.0.0.1:1'; // nothing listening
+
 /**
  * The live-balance scan, driven against stand-in chain endpoints so the
  * aggregation, the shared-address handling and the ledger comparison are all
@@ -154,15 +162,17 @@ test('a gap between the chain and the credited ledger is surfaced', async () => 
   assert.ok(eth!.onChain > eth!.credited);
 });
 
-test('a chain that cannot be read is reported, not silently skipped', async () => {
-  // EOS has no gateway account configured in this test environment.
+test('a chain with no gateway account is reported, not silently skipped', async () => {
+  // EOS shares one account and none is configured, so there is nothing to ask
+  // about. Reporting it as a failure matters: a silent zero would read as
+  // "no funds" when it means "did not check".
   const report = await scanHoldings({ chain: 'eos' });
   assert.ok(report.failures.some((f) => f.chain === 'eos'),
     'an unreadable chain should appear in failures');
+  assert.equal(report.addressesScanned, 0);
 });
 
 test('an unreachable endpoint fails that chain without stopping the scan', async () => {
-  process.env.SOLANA_RPC_URL = 'http://127.0.0.1:1'; // nothing listening
   const { getDepositIdentity } = await import('../src/services/addresses');
   await getDepositIdentity({ userExternalId: 'holdings-user', currency: 'SOL' });
 

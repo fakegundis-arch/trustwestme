@@ -26,6 +26,14 @@ function bad(label: string, detail = '') {
   fail++;
   console.log(`  \x1b[31m✗\x1b[0m ${label}${detail ? '\n      ' + detail : ''}`);
 }
+/**
+ * Something worth knowing that is not a fault. Kept out of the failure count
+ * on purpose: a check that cries wolf over a legitimate configuration stops
+ * being read.
+ */
+function note(label: string, detail = '') {
+  console.log(`  \x1b[36mi\x1b[0m ${label}${detail ? '\n      ' + detail : ''}`);
+}
 
 function sign(nonce: number) {
   return {
@@ -75,8 +83,10 @@ async function main() {
 
   const ipnUrl = process.env.DEFAULT_IPN_URL || '';
   if (ipnUrl) ok('DEFAULT_IPN_URL is set', ipnUrl);
-  else bad('DEFAULT_IPN_URL is empty',
-    'Deposits will credit inside the gateway but your site will never be told');
+  else note('DEFAULT_IPN_URL is empty',
+    'Correct if your exchange POLLS /wallet/transactions for deposits, which is\n'
+    + '      how the WestWallet-era integrations generally work. Only set this if your\n'
+    + '      exchange expects a callback when a deposit lands.');
 
   // --- reachability -------------------------------------------------------
   console.log('\nConnectivity');
