@@ -35,11 +35,28 @@ command -v ss >/dev/null || { red "ss is required: apt install -y iproute2"; exi
 
 # ---------------------------------------------------------------------------
 step "1/6  Checking the gateway is running on port ${GATEWAY_PORT}"
-if curl -fsS --max-time 5 "http://127.0.0.1:${GATEWAY_PORT}/health" | grep -q trustwestme; then
+# Wait rather than check once. "systemctl restart gateway" returns as soon as
+# systemd has forked, while the gateway binds a few hundred milliseconds later
+# once the database is open, so running this script immediately afterwards --
+# the obvious thing to do, and what the instructions say -- failed on a
+# gateway that was starting perfectly well.
+GATEWAY_UP=""
+for attempt in $(seq 1 15); do
+  if curl -fsS --max-time 5 "http://127.0.0.1:${GATEWAY_PORT}/health" 2>/dev/null \
+      | grep -q trustwestme; then
+    GATEWAY_UP=yes
+    break
+  fi
+  [ "$attempt" -eq 1 ] && yellow "    waiting for the gateway to answer..."
+  sleep 1
+done
+
+if [ -n "$GATEWAY_UP" ]; then
   green "    gateway is up"
 else
-  red "    nothing answering on http://127.0.0.1:${GATEWAY_PORT}/health"
+  red "    nothing answering on http://127.0.0.1:${GATEWAY_PORT}/health after 15s"
   red "    Start it first (npm start), or pass the right port: sudo bash $0 <port>"
+  red "    If it is supposed to be running:  journalctl -u gateway -n 30 --no-pager"
   exit 1
 fi
 
