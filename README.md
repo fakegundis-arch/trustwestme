@@ -90,6 +90,12 @@ Credit the user when you receive **`completed`**. `pending` is for showing them
 
 ## Setup
 
+**Installing on a fresh server? Follow [docs/INSTALL.md](docs/INSTALL.md)** — a
+step-by-step walkthrough from a bare Ubuntu VPS to a running gateway, written
+for someone who has not done this before.
+
+The short version, if you know your way around a server:
+
 ```bash
 npm install
 
