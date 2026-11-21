@@ -128,6 +128,50 @@ the error.
 
 ---
 
+
+
+Run this command first- 
+---bash
+
+# 1. Let the gateway user read the certificate (the CA key stays root-only)
+chmod 755 /etc/gateway-tls
+chown gateway:gateway /etc/gateway-tls/server.crt /etc/gateway-tls/server.key
+chmod 640 /etc/gateway-tls/server.key
+
+# 2. Install the TLS proxy service
+cat > /etc/systemd/system/gateway-tls.service <<'EOF'
+[Unit]
+Description=TLS front end for the payment gateway
+After=network-online.target gateway.service
+Wants=gateway.service
+
+[Service]
+Type=simple
+User=gateway
+Group=gateway
+WorkingDirectory=/opt/gateway/app
+Environment=TLS_CERT=/etc/gateway-tls/server.crt
+Environment=TLS_KEY=/etc/gateway-tls/server.key
+Environment=TLS_PROXY_PORT=443
+Environment=TLS_PROXY_HOST=127.0.0.1
+Environment=TLS_TARGET_PORT=8787
+ExecStart=/usr/bin/node dist/cli/tls-proxy.js
+Restart=always
+RestartSec=10
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now gateway-tls
+systemctl status gateway-tls --no-pager
+
+---
+
+
 ## Step 6 — Create the master seed phrase
 
 **Read this whole step before running the command.**
