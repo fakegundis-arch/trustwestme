@@ -133,6 +133,15 @@ the error.
 **Read this whole step before running the command.**
 
 ```bash
+> **Run every command in this guide exactly as written, `sudo -u gateway`
+> included.** The gateway runs as the `gateway` account, so anything it needs
+> must belong to that account. A command run as root instead leaves root-owned
+> files behind, and the failure surfaces later and somewhere else: a root-owned
+> `data/` stops the gateway booting with "attempt to write a readonly
+> database", and a root-only `/etc/gateway-tls` makes the TLS proxy report a
+> certificate as missing while it sits right there. Both have cost real
+> debugging time on live servers.
+
 sudo -u gateway npm run seed
 ```
 
@@ -575,6 +584,8 @@ sudo -u gateway git -C /opt/gateway/app checkout -- package-lock.json
 | `port ... already in use` | Another service has the port, or systemd already runs the gateway. `ss -tlnp \| grep 8787` |
 | `EBADENGINE` during install | Node is too old |
 | `dubious ownership` from git | You ran git as root on the gateway user's files. Prefix with `sudo -u gateway` |
+| `attempt to write a readonly database` | A CLI command was run as root and left `data/` root-owned. `chown -R gateway:gateway /opt/gateway/app/data` |
+| `gateway-tls` says `certificate not found` but the file is there | `/etc/gateway-tls` is root-only, so the service cannot traverse into it. `chmod 755 /etc/gateway-tls` |
 | 401 in the log | Your exchange's signature did not match. Set `AUTH_DEBUG=true`, restart, retry |
 | `HTTP 403 ... block page` | A free blockchain endpoint is refusing this server. It falls back automatically; a `BLOCKCHAIR_API_KEY` helps |
 | Deposits detected but never credited | Check `/pending` in Telegram and the confirmation counts |

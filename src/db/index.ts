@@ -126,14 +126,47 @@ CREATE INDEX IF NOT EXISTS idx_nonce_seen ON used_nonces(seen_at);
 export function getDb(): Database.Database {
   if (db) return db;
   const dir = path.dirname(config.dbPath);
-  fs.mkdirSync(dir, { recursive: true });
-  db = new Database(config.dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
-  db.exec(SCHEMA);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    throw new Error(ownershipHint(dir, e as Error));
+  }
+  try {
+    db = new Database(config.dbPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 5000');
+    db.exec(SCHEMA);
+  } catch (e) {
+    // SQLite says "attempt to write a readonly database", which sounds like a
+    // setting rather than what it nearly always is: the database and its
+    // directory were created by a different account. Running a CLI command as
+    // root -- `npm run keys -- --save`, say -- leaves root-owned files behind,
+    // and the service then runs as its own account and cannot write them.
+    // Naming the owner and the remedy turns a puzzle into a one-line fix.
+    db = null;
+    throw new Error(ownershipHint(config.dbPath, e as Error));
+  }
   log.info(`database ready at ${config.dbPath}`);
   return db;
+}
+
+function ownershipHint(target: string, cause: Error): string {
+  const base = `cannot open the database at ${config.dbPath}: ${cause.message}`;
+  let owner = '';
+  try {
+    const st = fs.statSync(target);
+    owner = ` It is owned by uid ${st.uid}:${st.gid}, while this process runs as`
+      + ` uid ${process.getuid?.() ?? '?'}:${process.getgid?.() ?? '?'}.`;
+  } catch { /* the path may not exist at all; the message still stands */ }
+
+  return `${base}.${owner}\n`
+    + `  The database and the directory holding it must be writable by the\n`
+    + `  account the gateway runs as. If a setup command was run as root, hand\n`
+    + `  it back:\n`
+    + `    chown -R <gateway-user>:<gateway-user> ${path.dirname(config.dbPath)}\n`
+    + `  Run the CLI commands as that account too, e.g.\n`
+    + `    sudo -u <gateway-user> npm run keys`;
 }
 
 export function closeDb() {
